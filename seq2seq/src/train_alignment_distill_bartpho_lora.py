@@ -194,7 +194,7 @@ def main(
             learning_rate=learning_rate,
             fp16=torch.cuda.is_available(),
             logging_steps=logging_steps,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             save_strategy="steps",
             eval_steps=eval_steps,
             save_steps=eval_steps,

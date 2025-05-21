@@ -144,7 +144,7 @@ def main(
             logging_steps=logging_steps,
             lr_scheduler_type=lr_scheduler_type,
             optim=optim,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             save_strategy="steps",
             eval_steps=eval_steps,
             save_steps=eval_steps,
