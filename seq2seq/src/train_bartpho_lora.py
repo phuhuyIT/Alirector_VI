@@ -124,7 +124,7 @@ def main(
     if ext in [".csv", ".tsv"]:
         data = load_dataset("csv", data_files={"train": data_path}, delimiter="," if ext == ".csv" else "\t")
     else:
-        data = load_dataset("json", data_files={"train": data_path}, jsonlines=True)
+        data = load_dataset("json", data_files={"train": data_path})
     datasets = data["train"].train_test_split(test_size=val_set_size, shuffle=True, seed=seed)
     column_names = datasets["train"].column_names
 
