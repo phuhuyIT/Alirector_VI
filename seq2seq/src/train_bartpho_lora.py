@@ -6,7 +6,7 @@ from typing import List, Union
 
 import torch
 import transformers
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from transformers import (
     AutoTokenizer,
     AutoConfig,
@@ -118,15 +118,13 @@ def main(
 
     # ===== dataset =====
     if not data_path:
-        raise ValueError("--data_path must be provided and point to a CSV/JSONL file with fields 'source', 'pred', 'target'.")
-    # detect file extension
-    ext = os.path.splitext(data_path)[1].lower()
-    if ext in [".csv", ".tsv"]:
-        data = load_dataset("csv", data_files={"train": data_path}, delimiter="," if ext == ".csv" else "\t")
-    else:
-        data = load_dataset("json", data_files={"train": data_path})
-    datasets = data["train"].train_test_split(test_size=val_set_size, shuffle=True, seed=seed)
-    column_names = datasets["train"].column_names
+        raise ValueError("--data_path must be provided and point to a JSONL file with fields 'source', 'pred', 'target'.")
+    # manual load JSONL to avoid LocalFileSystem caching issues
+    with open(data_path, encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    raw_ds = Dataset.from_list(records)
+    datasets = raw_ds.train_test_split(test_size=val_set_size, shuffle=True, seed=seed)
+    column_names = raw_ds.column_names
 
     sep_token = tokenizer.sep_token or tokenizer.eos_token or "</s>"
 
