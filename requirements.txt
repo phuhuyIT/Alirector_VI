@@ -8,3 +8,4 @@ peft
 fire
 sentencepiece
 OpenCC
+flash-attn --no-build-isolation
