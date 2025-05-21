@@ -52,7 +52,7 @@ def main(
     lora_dropout: float = 0.05,
     lora_target_modules: str = "q_proj,k_proj,v_proj,out_proj",
     # flash-attention (requires transformers >=4.37 and a supported GPU)
-    flash_attn: bool = True,
+    flash_attn: bool = False,
 ):
     """Simple finetuning script for Vietnamese Grammar Error Correction based on BARTpho + LoRA.
 
@@ -81,13 +81,13 @@ def main(
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
     config = AutoConfig.from_pretrained(model_path)
-    if flash_attn:
-        try:
-            # Newer versions of HF allow this attribute; silently ignore if BARTpho does not support.
-            config.attn_implementation = "flash_attention_2"
-        except Exception as e:
-            if is_main_process(local_rank):
-                print("[Warning] flash_attention_2 not supported for this model – fallback to default attention.")
+    # if flash_attn:
+    #     try:
+    #         # Newer versions of HF allow this attribute; silently ignore if BARTpho does not support.
+    #         config.attn_implementation = "flash_attention_2"
+    #     except Exception as e:
+    #         if is_main_process(local_rank):
+    #             print("[Warning] flash_attention_2 not supported for this model – fallback to default attention.")
 
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_path,
