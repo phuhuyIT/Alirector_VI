@@ -49,6 +49,8 @@ def main(
     lora_dropout: float = 0.05,
     lora_target_modules: str = "q_proj,k_proj,v_proj,out_proj",
     flash_attn: bool = True,
+    # enable TensorFloat-32 on Ampere+ GPUs
+    tf32: bool = False,
 ):
     """Train alignment model (forward or reverse) with BARTpho + LoRA."""
 
@@ -154,7 +156,7 @@ def main(
             group_by_length=group_by_length,
             report_to="tensorboard",
             load_best_model_at_end=True,
-            tf32=True,
+            tf32=tf32,
         ),
         train_dataset=train_ds,
         eval_dataset=eval_ds,

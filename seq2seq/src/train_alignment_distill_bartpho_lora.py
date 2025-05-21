@@ -103,6 +103,8 @@ def main(
     distill_way: str = "average_loss",
     kl_loss_type: str = "forward-kl",
     flash_attn: bool = True,
+    # enable TensorFloat-32 on Ampere+ GPUs
+    tf32: bool = False,
 ):
     """Stage-3 Distillation: fine-tune correction model with teacher align models (both directions)."""
 
@@ -204,6 +206,7 @@ def main(
             group_by_length=group_by_length,
             report_to="tensorboard",
             optim="adamw_torch",
+            tf32=tf32,
         ),
         train_dataset=train_ds,
         eval_dataset=eval_ds,

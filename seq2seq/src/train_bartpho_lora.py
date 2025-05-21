@@ -51,8 +51,10 @@ def main(
     lora_alpha: int = 16,
     lora_dropout: float = 0.05,
     lora_target_modules: str = "q_proj,k_proj,v_proj,out_proj",
-    # flash-attention (requires transformers >=4.37 and a supported GPU)
+    # flash-attention
     flash_attn: bool = False,
+    # enable TensorFloat-32 on Ampere+ GPUs
+    tf32: bool = False,
 ):
     """Simple finetuning script for Vietnamese Grammar Error Correction based on BARTpho + LoRA.
 
@@ -201,7 +203,7 @@ def main(
             group_by_length=group_by_length,
             report_to="tensorboard",
             load_best_model_at_end=True,
-            tf32=True,
+            tf32=tf32,
         ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
