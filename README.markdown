@@ -34,7 +34,7 @@ This project is a Vietnamese adaptation of the Alirector model, designed to corr
 To install, clone this repository and install the required dependencies using pip:
 
 ```bash
-git clone https://github.com/your-username/Alirector-VN.git
+git clone https://github.com/phuhuyIT/Alirector_VI.git
 cd Alirector-VN
 pip install -r requirements.txt
 ```
@@ -55,7 +55,7 @@ This will correct the grammatical errors in `input.txt` and save the result to `
 
 ## 🙏 Special Thanks
 
-Special thanks to the original author of Alirector, [Author's Name], for their groundbreaking work in grammatical error correction. This project was inspired by their research and aims to extend its capabilities to the Vietnamese language.
+Special thanks to the original authors of Alirector, Haihui Yang and Xiaojun Quan, for their groundbreaking work in grammatical error correction. This project was inspired by their research and aims to extend its capabilities to the Vietnamese language.
 
 ## 🤝 Contributing
 
