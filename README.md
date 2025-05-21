@@ -1,3 +1,6 @@
+# Alirector_VI
+An alirector for Vietnamese with BARTpho is core model. 
+
 <div align="center">
 <h1>Alirector: Alignment-Enhanced Chinese Grammatical Error Corrector (Findings of ACL 2024)</h1>
 </div>
