@@ -143,7 +143,7 @@ def main(
         print(tokenizer.batch_decode(train_ds["input_ids"][:2]))
         print(tokenizer.batch_decode(train_ds["labels"][:2]))
 
-    eval_steps = 1 / num_train_epochs
+    # Using per-epoch evaluation/saving instead of float eval_steps
 
     trainer = Seq2SeqTrainer(
         model=model,
@@ -158,10 +158,8 @@ def main(
             logging_steps=logging_steps,
             lr_scheduler_type=lr_scheduler_type,
             optim=optim,
-            eval_strategy="steps",
-            save_strategy="steps",
-            eval_steps=eval_steps,
-            save_steps=eval_steps,
+            eval_strategy="epoch",
+            save_strategy="epoch",
             output_dir=output_dir,
             save_total_limit=3,
             ddp_find_unused_parameters=True if ddp else None,

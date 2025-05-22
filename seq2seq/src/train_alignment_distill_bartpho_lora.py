@@ -195,7 +195,7 @@ def main(
     with accelerator.main_process_first():
         eval_ds = eval_ds.map(preprocess, batched=True, num_proc=os.cpu_count(), remove_columns=col_names, load_from_cache_file=True)
 
-    eval_steps = 1 / num_train_epochs
+    # Using per-epoch evaluation/saving instead of float eval_steps
 
     trainer = DistillTrainer(
         model=model,
@@ -209,10 +209,8 @@ def main(
             learning_rate=learning_rate,
             fp16=torch.cuda.is_available(),
             logging_steps=logging_steps,
-            eval_strategy="steps",
-            save_strategy="steps",
-            eval_steps=eval_steps,
-            save_steps=eval_steps,
+            eval_strategy="epoch",
+            save_strategy="epoch",
             output_dir=output_dir,
             save_total_limit=3,
             ddp_find_unused_parameters=True if ddp else None,
