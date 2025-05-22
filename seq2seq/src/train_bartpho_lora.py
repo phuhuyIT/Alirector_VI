@@ -33,6 +33,7 @@ def main(
     wandb_project: str = "alirector_seq2seq",
     wandb_entity: str = "",
     wandb_run_name: str = "",
+    wandb_api_key: str = "",
     # training hyperparams
     batch_size: int = 64,
     micro_batch_size: int = 16,
@@ -81,7 +82,7 @@ def main(
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
         print("Using device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu")
-        wandb.login()
+        wandb.login(key=wandb_api_key)
         wandb.init(
             project=wandb_project,
             entity=wandb_entity if wandb_entity else None,
