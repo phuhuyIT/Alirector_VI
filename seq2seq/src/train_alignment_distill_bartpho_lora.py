@@ -18,6 +18,7 @@ from transformers.trainer_utils import is_main_process, nested_detach
 from transformers.trainer import logger
 
 from accelerate import Accelerator
+import wandb
 from peft import LoraConfig, get_peft_model, PeftModel
 
 from models.modeling_alignment_distill_bart import AlignmentDistillBART
@@ -105,6 +106,10 @@ def main(
     flash_attn: bool = True,
     # enable TensorFloat-32 on Ampere+ GPUs
     tf32: bool = False,
+    # wandb
+    wandb_project: str = "alirector_seq2seq",
+    wandb_entity: str = "",
+    wandb_run_name: str = "",
 ):
     """Stage-3 Distillation: fine-tune correction model with teacher align models (both directions)."""
 
@@ -118,6 +123,13 @@ def main(
 
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
+        wandb.login()
+        wandb.init(
+            project=wandb_project,
+            entity=wandb_entity if wandb_entity else None,
+            name=wandb_run_name if wandb_run_name else None,
+            config=locals(),
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(cor_base_path, use_fast=False)
     tokenizer.model_input_names = [
@@ -204,7 +216,7 @@ def main(
             save_total_limit=3,
             ddp_find_unused_parameters=True if ddp else None,
             group_by_length=group_by_length,
-            report_to="tensorboard",
+            report_to=["tensorboard", "wandb"],
             optim="adamw_torch",
             tf32=tf32,
         ),

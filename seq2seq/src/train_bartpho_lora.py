@@ -23,13 +23,16 @@ from peft import LoraConfig, get_peft_model
 
 # Optional: accelerate for multi-GPU & mixed precision
 from accelerate import Accelerator
-
+import wandb
 
 def main(
     # model / data params
     model_path: str = "vinai/bartpho-syllable",
     data_path: str = "",
     output_dir: str = "./bartpho_lora_outputs",
+    wandb_project: str = "alirector_seq2seq",
+    wandb_entity: str = "",
+    wandb_run_name: str = "",
     # training hyperparams
     batch_size: int = 64,
     micro_batch_size: int = 16,
@@ -78,6 +81,13 @@ def main(
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
         print("Using device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu")
+        wandb.login()
+        wandb.init(
+            project=wandb_project,
+            entity=wandb_entity if wandb_entity else None,
+            name=wandb_run_name if wandb_run_name else None,
+            config=locals(),
+        )
 
     # ===== tokenizer & model =====
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
@@ -201,7 +211,7 @@ def main(
             save_total_limit=3,
             ddp_find_unused_parameters=True if ddp else None,
             group_by_length=group_by_length,
-            report_to="tensorboard",
+            report_to=["tensorboard","wandb"],
             load_best_model_at_end=True,
             tf32=tf32,
         ),

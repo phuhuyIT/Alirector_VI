@@ -18,6 +18,7 @@ from transformers import (
 from transformers.trainer_utils import is_main_process
 
 from accelerate import Accelerator
+import wandb
 from peft import LoraConfig, get_peft_model
 
 
@@ -25,6 +26,9 @@ def main(
     model_path: str = "vinai/bartpho-syllable",
     data_path: str = "",
     output_dir: str = "./align_bartpho_lora_fw",
+    wandb_project: str = "alirector_seq2seq",
+    wandb_entity: str = "",
+    wandb_run_name: str = "",
     # flags
     input_reverse: bool = False,  # False -> forward Align (src+pred), True -> reverse Align (pred+src)
     # training hyperparams
@@ -65,6 +69,13 @@ def main(
 
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
+        wandb.login()
+        wandb.init(
+            project=wandb_project,
+            entity=wandb_entity if wandb_entity else None,
+            name=wandb_run_name if wandb_run_name else None,
+            config=locals(),
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
@@ -154,7 +165,7 @@ def main(
             save_total_limit=3,
             ddp_find_unused_parameters=True if ddp else None,
             group_by_length=group_by_length,
-            report_to="tensorboard",
+            report_to=["tensorboard","wandb"],
             load_best_model_at_end=True,
             tf32=tf32,
         ),
