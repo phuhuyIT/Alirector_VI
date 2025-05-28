@@ -5,11 +5,34 @@ from transformers.models.bart.modeling_bart import (
     BartModel,
     BartPretrainedModel,
     BartEncoder,
-    _expand_mask
 )
 import torch
 import torch.nn as nn
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput
+
+# _expand_mask was renamed / removed in recent transformers releases (>4.41).
+# Attempt to import it; if missing, define a minimal compatible fallback.
+try:
+    from transformers.models.bart.modeling_bart import _expand_mask  # type: ignore
+except ImportError:
+    import torch
+
+    def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: int | None = None):
+        """Expand 2-D mask to 4-D causal mask used by BART attention layers.
+
+        Args:
+            mask: (bsz, src_len) with 1 for tokens that are NOT masked.
+            dtype: dtype of the output (usually hidden_states.dtype).
+            tgt_len: optional target length, defaults to src_len.
+        Returns:
+            (bsz, 1, tgt_len, src_len) tensor with 0 for keep, -inf for masked positions.
+        """
+        bsz, src_len = mask.shape
+        tgt_len = tgt_len if tgt_len is not None else src_len
+        expanded_mask = mask[:, None, None, :].to(dtype)
+        inverted_mask = (1.0 - expanded_mask) * torch.finfo(dtype).min
+        return inverted_mask.expand(bsz, 1, tgt_len, src_len)
+
 
 class BartEncoderwithDropoutSrc(BartEncoder):
     def __init__(self, config: BartConfig, embed_tokens, src_dropout):
