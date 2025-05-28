@@ -7,7 +7,11 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 from transformers.models.bart.modeling_bart import BartForConditionalGeneration, shift_tokens_right
 from transformers.models.bart.configuration_bart import BartConfig
-from transformers.generation_utils import GenerationMixin
+# compatible import for GenerationMixin across transformers versions
+try:
+    from transformers.generation.utils import GenerationMixin
+except ImportError:  # fallback for older transformers
+    from transformers.generation_utils import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions, Seq2SeqLMOutput, ModelOutput
 from transformers.utils import logging
 
