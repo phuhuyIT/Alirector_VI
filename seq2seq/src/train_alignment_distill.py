@@ -182,8 +182,11 @@ def main(
     src_dropout: float=0.2,
     from_scratch: bool=False,
     force_bart: bool = False,
+    use_tf32: bool = True,
 ):
     set_seed(seed)
+    torch.backends.cuda.matmul.allow_tf32 = use_tf32
+    torch.backends.cudnn.allow_tf32 = use_tf32
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     device_map = local_rank    
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -357,7 +360,7 @@ def main(
             report_to="tensorboard",
             label_smoothing_factor=label_smoothing_factor,
             load_best_model_at_end=True,
-            tf32=True,
+            tf32=use_tf32,
         ),
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
