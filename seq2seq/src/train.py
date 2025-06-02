@@ -220,7 +220,7 @@ def main(
             save_total_limit=10,
             ddp_find_unused_parameters=True if ddp else None,
             group_by_length=group_by_length,
-            report_to=["tensorboard","wandb"] if use_wandb else "tensorboard",
+            report_to="all",
             label_smoothing_factor=label_smoothing_factor,
             load_best_model_at_end=True,
             tf32=use_tf32,
