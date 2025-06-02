@@ -77,6 +77,7 @@ def main(
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     
     model_cls = BartForConditionalGenerationWithCopyMech if copy else BartForConditionalGenerationwithDropoutSrc
+    extra_model_kwargs: dict = {} if copy else {"src_dropout": src_dropout}
     
     if transformer:      # transformer
         dropout=dropout
@@ -91,9 +92,9 @@ def main(
                                             attention_dropout=attention_dropout,
                                             max_position_embeddings=max_position_embeddings)
         if not pretrained:
-            model = model_cls(config=config, src_dropout=src_dropout)
+            model = model_cls(config=config, **extra_model_kwargs)
         else:
-            model = model_cls.from_pretrained(model_path, src_dropout=src_dropout)
+            model = model_cls.from_pretrained(model_path, config=config, **extra_model_kwargs)
     else:
         dropout=dropout
         activation_function='gelu'
@@ -104,7 +105,7 @@ def main(
                                             activation_function=activation_function,
                                             activation_dropout=activation_dropout,
                                             attention_dropout=attention_dropout)
-        model = model_cls.from_pretrained(model_path, config=config, src_dropout=src_dropout)
+        model = model_cls.from_pretrained(model_path, config=config, **extra_model_kwargs)
     # model.config.max_length=max_target_length
 
     def preprocess_function(batch: Dict[str, List], src_max_length, tgt_max_length):
