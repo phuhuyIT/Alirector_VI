@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import transformers
 from transformers import (
-    BertTokenizer,
+    AutoTokenizer,
     DataCollatorForSeq2Seq,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
@@ -74,7 +74,7 @@ def main(
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
 
-    tokenizer = BertTokenizer.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
     
     model_cls = BartForConditionalGenerationWithCopyMech if copy else BartForConditionalGenerationwithDropoutSrc
     

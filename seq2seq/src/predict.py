@@ -4,8 +4,11 @@ import json
 import torch
 import argparse
 from tqdm import tqdm
-from transformers import BartForConditionalGeneration, BertTokenizer, GenerationConfig, BartConfig, PreTrainedModel
-from opencc import OpenCC
+from transformers import BartForConditionalGeneration, AutoTokenizer, GenerationConfig, BartConfig, PreTrainedModel
+try:
+    from opencc import OpenCC  # Chinese Traditional->Simplified converter
+except ImportError:
+    OpenCC = None  # Not installed; fine for BARTpho
 from typing import *
 import re
 import fire
@@ -49,8 +52,9 @@ def main(
     num_beams: int = 10,
     src_dropout=0.2,
 ):     
-    cc = OpenCC("t2s")
-    tokenizer = BertTokenizer.from_pretrained(model_path)
+    # For Vietnamese / BARTpho we do not need Chinese conversion.
+    cc = OpenCC("t2s") if OpenCC is not None else None
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
     
     config = BartConfig.from_pretrained(model_path)
     model_cls:PreTrainedModel = model_cls_dict[config.architectures[0]]
@@ -103,7 +107,8 @@ def main(
         if if_split:
             for start, end in ids:
                 pred_text = ''.join(preds[start:end+1])
-                pred_text = cc.convert(pred_text)
+                if cc is not None:
+                    pred_text = cc.convert(pred_text)
                 pred_texts.append(pred_text)
         else:
             pred_texts.extend(preds)

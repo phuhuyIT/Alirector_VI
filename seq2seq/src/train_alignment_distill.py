@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import transformers
 from transformers import (
-    BertTokenizer,
+    AutoTokenizer,
     DataCollatorForSeq2Seq,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
@@ -196,7 +196,8 @@ def main(
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
 
-    tokenizer:BertTokenizer = BertTokenizer.from_pretrained(cor_bart_path)
+    tokenizer = AutoTokenizer.from_pretrained(cor_bart_path, use_fast=False)
+    sep_token = tokenizer.sep_token or tokenizer.eos_token or "</s>"
     tokenizer.model_input_names = ["input_ids", "attention_mask", "align_input_ids", "align_attention_mask"]
     
     if force_bart:
@@ -267,7 +268,7 @@ def main(
         model_inputs["labels"] = labels["input_ids"]
         
         # align inputs
-        align_inputs = [src + tokenizer.sep_token + pred for src, pred in zip(batch['source'], batch['pred'])]
+        align_inputs = [f"{src}{sep_token}{pred}" for src, pred in zip(batch['source'], batch['pred'])]
         align_tokenize_outputs = tokenizer(align_inputs,
                                             max_length=max_align_length,
                                             padding=False,
@@ -277,7 +278,7 @@ def main(
         model_inputs['align_input_ids'] = align_tokenize_outputs['input_ids']
         
         # align reverse inputs
-        align_reverse_inputs = [pred + tokenizer.sep_token + src for src, pred in zip(batch['source'], batch['pred'])]
+        align_reverse_inputs = [f"{pred}{sep_token}{src}" for src, pred in zip(batch['source'], batch['pred'])]
         align_reverse_tokenize_outputs = tokenizer(align_reverse_inputs,
                                             max_length=max_align_length,
                                             padding=False,

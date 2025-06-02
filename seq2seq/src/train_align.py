@@ -10,7 +10,7 @@ import torch
 import transformers
 from transformers import (
     BartConfig,
-    BertTokenizer,
+    AutoTokenizer,
     DataCollatorForSeq2Seq,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
@@ -67,7 +67,9 @@ def main(
     if is_main_process(local_rank):
         transformers.utils.logging.set_verbosity_info()
 
-    tokenizer:BertTokenizer=BertTokenizer.from_pretrained(model_path)
+    # tokenizer initialization
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+    sep_token = tokenizer.sep_token or tokenizer.eos_token or "</s>"
     if transformer:      # transformer
         dropout=dropout
         activation_function='relu'
@@ -103,7 +105,7 @@ def main(
     column_names = datasets["train"].column_names
 
     def preprocess_function(examples):
-        inputs = [src + tokenizer.sep_token + pred if not input_reverse else pred + tokenizer.sep_token + src for src, pred in zip(examples['source'], examples['pred'])]
+        inputs = [f"{src}{sep_token}{pred}" if not input_reverse else f"{pred}{sep_token}{src}" for src, pred in zip(examples['source'], examples['pred'])]
         targets = examples['target']
         model_inputs = tokenizer(inputs,
                                 max_length=max_source_length,

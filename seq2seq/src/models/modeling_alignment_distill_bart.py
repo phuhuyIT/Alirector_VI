@@ -1,4 +1,4 @@
-from transformers import BartForConditionalGeneration, BartPretrainedModel, BartConfig, BertTokenizer
+from transformers import BartForConditionalGeneration, BartPretrainedModel, BartConfig, AutoTokenizer
 from transformers.modeling_outputs import Seq2SeqLMOutput
 import torch
 import torch.nn.functional as F
