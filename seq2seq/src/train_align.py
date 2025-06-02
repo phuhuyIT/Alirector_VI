@@ -20,7 +20,7 @@ from transformers import (
 from transformers.trainer_utils import is_main_process
 from datasets import load_dataset
 from models.modeling_bart_dropsrc import BartForConditionalGenerationwithDropoutSrc
-
+import wandb
 
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -53,11 +53,17 @@ def main(
     dropout: float=0.1,
     src_dropout: float=0.2,
     use_tf32: bool = True,
+    use_wandb: bool = False,
+    wandb_project: str = "Alirector_Vi",
+    wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
+    wandb_api_key: str = "",
 ):  
     set_seed(seed)
-    # TF32 toggling
     torch.backends.cuda.matmul.allow_tf32 = use_tf32
     torch.backends.cudnn.allow_tf32 = use_tf32
+    if use_wandb:
+        wandb.login(key=wandb_api_key)
+        wandb.init(project=wandb_project, entity=wandb_entity)
 
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     device_map = local_rank    
@@ -190,7 +196,7 @@ def main(
             save_total_limit=3,
             ddp_find_unused_parameters=True if ddp else None,
             group_by_length=group_by_length,
-            report_to="tensorboard",
+            report_to=["tensorboard","wandb"] if use_wandb else "tensorboard",
             label_smoothing_factor=label_smoothing_factor,
             load_best_model_at_end=True,
             tf32=use_tf32,

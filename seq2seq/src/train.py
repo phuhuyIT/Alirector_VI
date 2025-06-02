@@ -5,6 +5,7 @@ import json
 import os
 import random
 import sys
+import wandb
 
 import numpy as np
 import torch
@@ -60,11 +61,17 @@ def main(
     src_dropout: float=0.0,
     pretrained: bool=True,   # whether to load the model from pretrained model or random initialized
     use_tf32: bool = True,
+    use_wandb: bool = False,
+    wandb_project: str = "Alirector_Vi",
+    wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
+    wandb_api_key: str = "",
 ):
     set_seed(seed)
-    # TF32 toggling
     torch.backends.cuda.matmul.allow_tf32 = use_tf32
     torch.backends.cudnn.allow_tf32 = use_tf32
+    if use_wandb:
+        wandb.login(key=wandb_api_key)
+        wandb.init(project=wandb_project, entity=wandb_entity)
 
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     device_map = local_rank    
@@ -213,7 +220,7 @@ def main(
             save_total_limit=10,
             ddp_find_unused_parameters=True if ddp else None,
             group_by_length=group_by_length,
-            report_to="tensorboard",
+            report_to=["tensorboard","wandb"] if use_wandb else "tensorboard",
             label_smoothing_factor=label_smoothing_factor,
             load_best_model_at_end=True,
             tf32=use_tf32,
