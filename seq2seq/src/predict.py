@@ -15,6 +15,10 @@ import fire
 from models.modeling_copy import BartForConditionalGenerationWithCopyMech
 from models.modeling_bart_dropsrc import BartForConditionalGenerationwithDropoutSrc
 import math
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 model_cls_dict = {
     'BartForConditionalGenerationWithCopyMech': BartForConditionalGenerationWithCopyMech,
@@ -51,6 +55,10 @@ def main(
     temperature: float = 1,
     num_beams: int = 10,
     src_dropout=0.2,
+    use_wandb: bool = False,
+    wandb_project: str = "Alirector_Vi",
+    wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
+    wandb_api_key: str = "",
 ):     
     # For Vietnamese / BARTpho we do not need Chinese conversion.
     cc = OpenCC("t2s") if OpenCC is not None else None
@@ -82,9 +90,26 @@ def main(
         with open(input_path, 'r', encoding='utf-8') as f:
             texts = [line.strip().split('\t')[-1] for line in f.readlines()]
     
+    total_samples = len(texts)
+    if use_wandb and wandb is not None:
+        wandb.login(key=wandb_api_key)
+        wandb.init(project=wandb_project, entity=wandb_entity, config={
+            "model_path": model_path,
+            "input_path": input_path,
+            "batch_size": batch_size,
+            "num_beams": num_beams,
+            "split_length": split_length,
+            "if_split": if_split,
+            "max_target_length": max_target_length,
+            "temperature": temperature,
+        })
+    elif use_wandb and wandb is None:
+        print("wandb library not available; skipping WandB logging.")
+
+    processed = 0
     batch_size = batch_size // num_beams
     pred_texts = []
-    for idx in tqdm(range(0, len(texts), batch_size)):
+    for idx in tqdm(range(0, len(texts), batch_size), desc="Predicting", ncols=100):
         batch_texts = texts[idx:idx+batch_size]
         if if_split:
             split_texts, ids = batch_split_sentence(batch_texts, split_length)
@@ -118,6 +143,10 @@ def main(
                 pred_texts.append(pred_text)
         else:
             pred_texts.extend(preds)
+        
+        processed += len(batch_texts)
+        if use_wandb and wandb is not None:
+            wandb.log({"processed": processed, "progress": processed / total_samples})
     
 
     if output_path.endswith('.json'):
@@ -129,6 +158,13 @@ def main(
     else:
         with open(output_path, 'w', encoding='utf-8') as o:
             o.write('\n'.join(pred_texts))
+
+    if use_wandb and wandb is not None:
+        if os.path.exists(output_path):
+            artifact = wandb.Artifact('predictions', type='result')
+            artifact.add_file(output_path)
+            wandb.log_artifact(artifact)
+        wandb.finish()
 
 if __name__ == "__main__":
     fire.Fire(main)
