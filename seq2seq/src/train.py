@@ -64,7 +64,7 @@ def main(
     use_wandb: bool = False,
     wandb_project: str = "Alirector_Vi",
     wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
-    wandb_api_key: str = "",
+    wandb_api_key: str = ""
 ):
     set_seed(seed)
     torch.backends.cuda.matmul.allow_tf32 = use_tf32

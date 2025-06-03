@@ -70,7 +70,13 @@ def main(
     model.config.use_cache = True
     
     if input_path.endswith('.json'):
-        data = json.load(open(input_path))
+        # load JSONL (one object per line) or JSON array
+        with open(input_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+        if content.startswith('['):
+            data = json.loads(content)
+        else:
+            data = [json.loads(line) for line in content.splitlines() if line.strip()]
         texts = [line['source'] for line in data]
     else:
         with open(input_path, 'r', encoding='utf-8') as f:
