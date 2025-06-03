@@ -5,10 +5,7 @@ import torch
 import argparse
 from tqdm import tqdm
 from transformers import BartForConditionalGeneration, AutoTokenizer, GenerationConfig, BartConfig, PreTrainedModel
-try:
-    from opencc import OpenCC  # Chinese Traditional->Simplified converter
-except ImportError:
-    OpenCC = None  # Not installed; fine for BARTpho
+# OpenCC removed – Chinese conversion no longer required
 from typing import *
 import re
 import fire
@@ -60,8 +57,7 @@ def main(
     wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
     wandb_api_key: str = "",
 ):     
-    # For Vietnamese / BARTpho we do not need Chinese conversion.
-    cc = OpenCC("t2s") if OpenCC is not None else None
+    # Vietnamese dataset: no Chinese conversion needed.
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
     
     config = BartConfig.from_pretrained(model_path)
@@ -133,13 +129,10 @@ def main(
                 generation_config=generation_config,
             )
         preds = tokenizer.batch_decode(pred_ids.detach().cpu(), skip_special_tokens=True)
-        preds = [pred.replace(' ', '') for pred in preds]
         
         if if_split:
             for start, end in ids:
-                pred_text = ''.join(preds[start:end+1])
-                if cc is not None:
-                    pred_text = cc.convert(pred_text)
+                pred_text = ' '.join(preds[start:end+1])
                 pred_texts.append(pred_text)
         else:
             pred_texts.extend(preds)
