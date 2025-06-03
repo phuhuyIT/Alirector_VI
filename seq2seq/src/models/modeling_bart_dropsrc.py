@@ -8,6 +8,7 @@ from transformers.models.bart.modeling_bart import (
 )
 import torch
 import torch.nn as nn
+import math
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput
 
 # _expand_mask was renamed / removed in recent transformers releases (>4.41).
@@ -38,6 +39,7 @@ class BartEncoderwithDropoutSrc(BartEncoder):
     def __init__(self, config: BartConfig, embed_tokens, src_dropout):
         super().__init__(config, embed_tokens)
         self.src_dropout = src_dropout
+        self.embed_scale = math.sqrt(config.d_model) if getattr(config, "scale_embedding", False) else 1.0
         print('===================  src_dropout: ', src_dropout)
         self.post_init()
 
