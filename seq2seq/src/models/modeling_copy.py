@@ -241,23 +241,25 @@ class BartForConditionalGenerationWithCopyMech(BartForConditionalGeneration):
         self.copy_module = CopyMechModule(config.d_model, config.vocab_size)
         self.post_init()
     
-    def _prepare_encoder_decoder_kwargs_for_generation(self, inputs_tensor: torch.Tensor, model_kwargs, model_input_name: Optional[str] = None) -> Dict[str, Any]:
-        # 1. get encoder
-        encoder = self.get_encoder()
-
-        # 2. prepare encoder args and encoder kwargs from model kwargs
-        irrelevant_prefix = ["decoder_", "cross_attn", "use_cache"]
-        encoder_kwargs = {
-            argument: value
-            for argument, value in model_kwargs.items()
-            if not any(argument.startswith(p) for p in irrelevant_prefix)
-        }
-
-        # 3. make sure that encoder returns `ModelOutput`
-        model_input_name = model_input_name if model_input_name is not None else self.main_input_name
-        encoder_kwargs["return_dict"] = True
-        encoder_kwargs[model_input_name] = inputs_tensor
-        model_kwargs["encoder_outputs"] = encoder(**encoder_kwargs)
+    def _prepare_encoder_decoder_kwargs_for_generation(
+        self,
+        inputs_tensor: torch.Tensor,
+        model_kwargs: Dict[str, Any],
+        *args,
+        **extra_kwargs,
+    ) -> Dict[str, Any]:
+        """Wrap the parent implementation and additionally save ``src_input_ids`` for
+        the copy-mechanism. Accepts arbitrary *args/ **kwargs so that signature
+        mismatches do not raise a ``TypeError`` when HuggingFace updates the base
+        method.
+        """
+        
+        # Call upstream implementation first (handles encoder forward etc.)
+        model_kwargs = super()._prepare_encoder_decoder_kwargs_for_generation(
+            inputs_tensor, model_kwargs, *args, **extra_kwargs
+        )
+        
+        # Preserve original source ids for later use in copy mechanism.
         model_kwargs["src_input_ids"] = inputs_tensor
         
         return model_kwargs
