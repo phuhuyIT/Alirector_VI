@@ -50,7 +50,7 @@ def main(
     if_split: bool = False,     # whether or not to split long sentence into short ones before inference
     max_target_length: int = 128,
     temperature: float = 1,
-    num_beams: int = 10,
+    num_beams: int = 2,
     src_dropout=0.2,
     use_wandb: bool = False,
     wandb_project: str = "Alirector_Vi",
