@@ -56,6 +56,7 @@ def main(
     wandb_project: str = "Alirector_Vi",
     wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
     wandb_api_key: str = "",
+    fp16: bool = False,  # New argument to control FP16 usage
 ):     
     # Vietnamese dataset: no Chinese conversion needed.
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
@@ -68,7 +69,14 @@ def main(
         model = model_cls.from_pretrained(model_path)
     print(model.__class__.__name__)
     
-    model.half()
+    # NOTE: On some GPUs (e.g. T4 / P100) running scaled_dot_product_attention in FP16 can
+    # trigger the dreaded "device-side assert triggered" error. We therefore make FP16 optional.
+    # By default, run in FP32 unless the user explicitly sets `--fp16 True`.
+    if fp16:
+        try:
+            model.half()
+        except Exception as e:
+            print(f"[WARN] Falling back to FP32 because model.half() failed: {e}")
     model.cuda()
     model.eval()
     model.config.use_cache = True
