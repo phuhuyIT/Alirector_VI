@@ -62,13 +62,9 @@ def main(
     # Vietnamese dataset: no Chinese conversion needed.
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
     
-    config = BartConfig.from_pretrained(model_path)
-    model_cls:PreTrainedModel = model_cls_dict[config.architectures[0]]
-    if model_cls == BartForConditionalGenerationwithDropoutSrc:
-        model = BartForConditionalGenerationwithDropoutSrc.from_pretrained(model_path, src_dropout=src_dropout)
-    else:
-        model = model_cls.from_pretrained(model_path)
-    print(model.__class__.__name__)
+    # Always load standard HF BartForConditionalGeneration to avoid custom encoder issues
+    model = BartForConditionalGeneration.from_pretrained(model_path)
+    print("Using standard BartForConditionalGeneration for inference")
     
     # NOTE: On some GPUs (e.g. T4 / P100) running scaled_dot_product_attention in FP16 can
     # trigger the dreaded "device-side assert triggered" error. We therefore make FP16 optional.
