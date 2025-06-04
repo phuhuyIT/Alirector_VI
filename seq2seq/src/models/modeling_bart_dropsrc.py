@@ -74,32 +74,27 @@ class BartEncoderwithDropoutSrc(BartEncoder):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
-            input = input_ids
-            input_ids = input_ids.view(-1, input_ids.shape[-1])
+            input_shape = input_ids.size()
+            input_ids = input_ids.view(-1, input_shape[-1])
         elif inputs_embeds is not None:
-            input = inputs_embeds[:, :, -1]
+            input_shape = inputs_embeds.size()[:-1]
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         if inputs_embeds is None:
-            # inputs_embeds = self.embed_tokens(input_ids) * self.embed_scale
             inputs_embeds = self.embed_tokens(input_ids)
             if self.training:
                 inputs_embeds = self.SRC_dropout(inputs_embeds, self.src_dropout)
 
         inputs_embeds = inputs_embeds * self.embed_scale
         
-        # Use the standard HuggingFace implementation approach for position embeddings
-        # This is a direct port from the original BartEncoder implementation
+        # Handle attention mask
         if attention_mask is None:
-            if input_ids is not None:
-                attention_mask = torch.ones_like(input_ids)
-            else:
-                attention_mask = torch.ones(inputs_embeds.shape[:2], device=inputs_embeds.device)
+            attention_mask = torch.ones(input_shape, device=inputs_embeds.device)
             
-        # Extract batch size and sequence length and create position IDs
-        batch_size, seq_length = input_ids.shape if input_ids is not None else inputs_embeds.shape[:2]
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
+        # Create position IDs for embed_positions
+        batch_size, seq_length = input_shape
+        device = inputs_embeds.device
         past_key_values_length = 0
             
         # Create position IDs - this is what BART's LearnedPositionalEmbedding expects
@@ -107,8 +102,8 @@ class BartEncoderwithDropoutSrc(BartEncoder):
             past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device
         )
         position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_length)
-            
-        # Create position embeddings using the correct format
+        
+        # Get position embeddings
         embed_pos = self.embed_positions(position_ids)
 
         hidden_states = inputs_embeds + embed_pos
