@@ -89,7 +89,13 @@ class BartEncoderwithDropoutSrc(BartEncoder):
 
         inputs_embeds = inputs_embeds * self.embed_scale
         
-        embed_pos = self.embed_positions(input)
+        # Calculate input shape from input_ids or inputs_embeds
+        if input_ids is not None:
+            input_shape = input_ids.size()
+        else:
+            input_shape = inputs_embeds.size()[:-1]
+            
+        embed_pos = self.embed_positions(input_shape)
         embed_pos = embed_pos.to(inputs_embeds.device)
 
         hidden_states = inputs_embeds + embed_pos
