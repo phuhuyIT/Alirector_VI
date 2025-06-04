@@ -57,6 +57,7 @@ def main(
     wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
     wandb_api_key: str = "",
     fp16: bool = False,  # New argument to control FP16 usage
+    max_source_length: int = 1022,  # Prevent exceeding positional embedding limit (1024 - 2 offset)
 ):     
     # Vietnamese dataset: no Chinese conversion needed.
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
@@ -122,6 +123,8 @@ def main(
         inputs = tokenizer(
             split_texts,
             padding=True,
+            truncation=True,
+            max_length=max_source_length,
             return_tensors='pt',
             return_token_type_ids=False,
         )
