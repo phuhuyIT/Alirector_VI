@@ -108,7 +108,7 @@ def main(
     model.config.max_length=max_target_length
 
     # data
-    data = load_dataset("json", data_files=data_path)
+    data = load_dataset("json", data_files={"train": data_path})
     datasets = data["train"].train_test_split(
         test_size=val_set_size, shuffle=True, seed=seed
     )
