@@ -56,16 +56,20 @@ class AlignmentDistillBART(nn.Module):
         align_reverse_input_ids: torch.LongTensor = None,
         align_reverse_attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.LongTensor] = None,
+        num_items_in_batch: Optional[int] = None,  # Handle this param passed by Trainer
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
         
         self.cor_bart.train()
         
+        # Create kwargs for BartForConditionalGeneration without num_items_in_batch
+        bart_kwargs = {k: v for k, v in kwargs.items() if k != 'num_items_in_batch'}
+        
         cor_outputs = self.cor_bart(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
-            **kwargs,
+            **bart_kwargs,
         )
         lm_loss = cor_outputs.loss.clone().detach()
         loss = cor_outputs.loss
@@ -81,7 +85,7 @@ class AlignmentDistillBART(nn.Module):
                     input_ids=align_input_ids,
                     attention_mask=align_attention_mask,
                     labels=labels,
-                    **kwargs,
+                    **bart_kwargs,
                 )   
                 align_logits = align_outputs.logits
                 active_align_logits = align_logits.view(-1, align_logits.size(-1))[labels_mask]
@@ -91,7 +95,7 @@ class AlignmentDistillBART(nn.Module):
                     input_ids=align_reverse_input_ids,
                     attention_mask=align_reverse_attention_mask,
                     labels=labels,
-                    **kwargs,
+                    **bart_kwargs,
                 )   
                 align_reverse_logits = align_reverse_outputs.logits
                 active_align_reverse_logits = align_reverse_logits.view(-1, align_reverse_logits.size(-1))[labels_mask]
