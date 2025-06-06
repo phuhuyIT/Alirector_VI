@@ -42,7 +42,7 @@ def main(
     max_source_length: int = 128,
     max_target_length: int = 128,
     label_smoothing_factor: float = 0.0,
-    logging_steps: int = 5,
+    logging_steps: int = 50,
     input_reverse: bool = False,
     transformer: bool = False,
     lr_scheduler_type: str = "linear",
