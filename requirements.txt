@@ -1,14 +1,7 @@
-torch
-torchvision
-torchaudio
-transformers
-xformers
-accelerate
-bitsandbytes
-datasets
-huggingface-hub
-fsspec
-peft
-fire
-sentencepiece
-OpenCC
+transformers>=4.41
+datasets>=2.19
+accelerate>=0.29
+sentencepiece>=0.2
+wandb>=0.17
+evaluate>=0.5   # for BLEU/ERRANT later
+py_vncorenlp

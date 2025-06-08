@@ -1,246 +1,163 @@
-from typing import Dict, List
-import fire
-import argparse
-import json
-import os
-import random
-import sys
-import wandb
+#!/usr/bin/env python
+"""
+Fine-tune BARTpho-syllable for Vietnamese GEC (Stage-1 Alirector).
 
-import numpy as np
-import torch
-import transformers
-from transformers import (
-    AutoTokenizer,
-    DataCollatorForSeq2Seq,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    BartForConditionalGeneration,
-    set_seed,
-    BartConfig,
-)
-from transformers.trainer_utils import is_main_process
-from datasets import load_dataset
-from accelerate import Accelerator
-from models.modeling_copy import BartForConditionalGenerationWithCopyMech
-from models.modeling_bart_dropsrc import BartForConditionalGenerationwithDropoutSrc
+Usage (Colab GPU):
+  python -m src.train_bartpho \
+      --dataset_name bmd1905/vi-error-correction-v2 \
+      --output_dir runs/bartpho-gec \
+      --wandb_project vietgec --wandb_entity myteam --wandb_api_key $KEY
+"""
 
-import sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import os, argparse, wandb
+from datasets import load_dataset, load_metric, disable_progress_bar, DatasetDict
+from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
+                          DataCollatorForSeq2Seq, Seq2SeqTrainer,
+                          Seq2SeqTrainingArguments)
+from functools import lru_cache
+try:
+    from py_vncorenlp import VnCoreNLP   # noqa: E402
+except ImportError:
+    VnCoreNLP = None  # will raise later if user requests word segmentation
+from typing import List
 
-def main(
-    # model/data params
-    model_path: str = 'fnlp/bart-large-chinese',
-    data_path: str = "",
-    eval_path: str = "",
-    output_dir: str = "",
-    val_set_size: int = 2000,
-    # training hyperparams
-    batch_size: int = 128,
-    micro_batch_size: int = 32,     
-    eval_batch_size: int = 32,  
-    num_train_epochs: int = 5,
-    learning_rate: float = 1e-5,
-    seed: int = 42,
-    warmup_ratio : float = 0.1,
-    group_by_length: bool = False,
-    max_source_length: int = 512,
-    max_target_length: int = 512,
-    eval_max_source_length: int = 256,
-    eval_max_target_length: int = 256,
-    label_smoothing_factor: float = 0.0,
-    logging_steps: int = 20,
-    transformer: bool = False,      # whether to use transformer or bart
-    copy: bool = False,
-    lr_scheduler_type: str = "linear",
-    optim: str = "adamw_torch",
-    patience: int = 5,
-    warmup_steps: int = 2000,
-    adam_betas: tuple = (0.9, 0.999),
-    dropout: float=0.0,
-    src_dropout: float=0.0,
-    pretrained: bool=True,   # whether to load the model from pretrained model or random initialized
-    use_tf32: bool = True,
-    use_wandb: bool = False,
-    wandb_project: str = "Alirector_Vi",
-    wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
-    wandb_api_key: str = ""
-):
-    set_seed(seed)
-    torch.backends.cuda.matmul.allow_tf32 = use_tf32
-    torch.backends.cudnn.allow_tf32 = use_tf32
-    if use_wandb:
-        wandb.login(key=wandb_api_key)
-        wandb.init(project=wandb_project, entity=wandb_entity)
+#disable_progress_bar()   # tidy Colab logs
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    device_map = local_rank    
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    ddp = world_size != 1
-    gradient_accumulation_steps = batch_size // micro_batch_size
-    if ddp:
-        gradient_accumulation_steps = gradient_accumulation_steps // world_size
-    
-    # Set the verbosity to info of the Transformers logger (on main process only):
-    if is_main_process(local_rank):
-        transformers.utils.logging.set_verbosity_info()
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    
-    model_cls = BartForConditionalGenerationWithCopyMech if copy else BartForConditionalGenerationwithDropoutSrc
-    extra_model_kwargs: dict = {} if copy else {"src_dropout": src_dropout}
-    
-    if transformer:      # transformer
-        dropout=dropout
-        activation_function='relu'
-        activation_dropout=0.0
-        attention_dropout=0.0
-        src_dropout=src_dropout
-        max_position_embeddings=512
-        config = BartConfig.from_pretrained(model_path, dropout=dropout,
-                                            activation_function=activation_function,
-                                            activation_dropout=activation_dropout,
-                                            attention_dropout=attention_dropout,
-                                            max_position_embeddings=max_position_embeddings)
-        if not pretrained:
-            model = model_cls(config=config, **extra_model_kwargs)
-        else:
-            model = model_cls.from_pretrained(model_path, config=config, **extra_model_kwargs)
-    else:
-        dropout=dropout
-        activation_function='gelu'
-        activation_dropout=0.0
-        attention_dropout=0.0
-        src_dropout=src_dropout
-        config = BartConfig.from_pretrained(model_path, dropout=dropout,
-                                            activation_function=activation_function,
-                                            activation_dropout=activation_dropout,
-                                            attention_dropout=attention_dropout)
-        model = model_cls.from_pretrained(model_path, config=config, **extra_model_kwargs)
-    # model.config.max_length=max_target_length
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser()
+    # data & model
+    p.add_argument("--dataset_name", type=str, default="bmd1905/vi-error-correction-v2")
+    p.add_argument("--model_name_or_path", type=str, default="vinai/bartpho-syllable")
+    p.add_argument("--max_source_len", type=int, default=192)
+    p.add_argument("--max_target_len", type=int, default=192)
+    p.add_argument("--output_dir", type=str, required=True)
+    # train hyper-params
+    p.add_argument("--per_device_train_batch_size", type=int, default=4)
+    p.add_argument("--per_device_eval_batch_size", type=int, default=4)
+    p.add_argument("--learning_rate", type=float, default=3e-5)
+    p.add_argument("--weight_decay", type=float, default=0.01)
+    p.add_argument("--num_train_epochs", type=int, default=6)
+    p.add_argument("--gradient_accumulation_steps", type=int, default=64)
+    # wandb
+    p.add_argument("--wandb_project", type=str)
+    p.add_argument("--wandb_entity", type=str, default=None)
+    p.add_argument("--wandb_api_key", type=str, default=None)
+    p.add_argument("--word_segment", action="store_true",
+                   help="Run VNCoreNLP word segmentation before tokenisation "
+                        "(required for bartpho-word checkpoints)")
+    p.add_argument("--isbf16", action="store_true",
+                   help="Use bf16 instead of fp16")
+    return p
 
-    def preprocess_function(batch: Dict[str, List], src_max_length, tgt_max_length):
-        inputs = batch['source']
-        targets = batch['target']
-        model_inputs = tokenizer(inputs,
-                                max_length=src_max_length,
-                                padding=False,
-                                truncation=True,
-                                return_token_type_ids=False)
+# ------------- DEFINE helper ---------------------------------------------------
 
-        # Setup the tokenizer for targets
-        labels = tokenizer(targets,
-                        max_length=tgt_max_length,
-                        padding=False,
-                        truncation=True,
-                        return_token_type_ids=False)
+@lru_cache(maxsize=1)
+def get_segmenter():
+    """Lazy-load VNCoreNLP only once (fork-safe)."""
+    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
 
+
+def segment_batch(texts):
+    """Segment a list of raw sentences -> list of 'word1_word2' strings."""
+    seg = get_segmenter()
+    # seg.tokenize expects List[str] and returns List[List[str]]
+    out = seg.tokenize(texts)
+    return [" ".join(line) for line in out]
+
+def main():
+    args = build_argparser().parse_args()
+
+    # ---- Weights & Biases login ------------------------------------------
+    if args.wandb_api_key:
+        os.environ["WANDB_API_KEY"] = args.wandb_api_key
+    wandb.init(project=args.wandb_project, entity=args.wandb_entity,
+               name=os.path.basename(args.output_dir),
+               config=vars(args))
+
+    # ---- Load model & tokenizer ------------------------------------------
+    auto_word = "word" in args.model_name_or_path.lower()
+    do_segment = args.word_segment or auto_word
+
+    if do_segment and VnCoreNLP is None:
+        raise RuntimeError("py_vncorenlp is not installed but --word_segment "
+                           "was set or bartpho-word detected.")
+
+    tok = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path)
+
+    # ---- Load HF dataset --------------------------------------------------
+    ds = load_dataset(args.dataset_name)
+    # create 10k dev split
+    dev_size = 100000
+    ds = ds["train"].train_test_split(test_size=dev_size, seed=42)
+    dataset = DatasetDict(train=ds["train"], validation=ds["test"],
+                          test=load_dataset(args.dataset_name)["test"])
+
+    # ---- Tokenisation -----------------------------------------------------
+    def preprocess(examples):
+        inputs = examples["input"]
+        if do_segment:
+            inputs = segment_batch(inputs)
+
+        model_inputs = tok(
+            inputs,
+            max_length=args.max_source_len,
+            truncation=True
+        )
+
+        with tok.as_target_tokenizer():
+            labels = tok(
+                examples["output"],
+                max_length=args.max_target_len,
+                truncation=True
+            )
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
 
-    # prepocess data
-    data = load_dataset("json", data_files=data_path)
-    column_names = data['train'].column_names
-    num_workers = 1 if tokenizer.__class__.__name__ == 'QWenTokenizer' else os.cpu_count()
+    tokenised = dataset.map(preprocess, batched=True,
+                            remove_columns=["input", "output"])
 
-    accelerator = Accelerator()
-    if os.path.exists(eval_path):
-        train_ds = data["train"]
-        val_ds = load_dataset("json", data_files=eval_path)["train"]
-    elif val_set_size > 0:
-        train_val = data["train"].train_test_split(
-            test_size=val_set_size, shuffle=True, seed=seed
-        )
-        train_ds = train_val["train"]
-        val_ds = train_val["test"]
-    else:
-        train_ds = data["train"]
-        val_ds = None
-        
-        
-    with accelerator.main_process_first():      # first load the dataset in the main process, then load the cache in other processes
-        train_data = train_ds.map(
-            preprocess_function,
-            batched=True,
-            num_proc=num_workers,
-            load_from_cache_file=True,
-            remove_columns=column_names,
-            fn_kwargs={'src_max_length': max_source_length, 'tgt_max_length': max_target_length}
-        )
-    train_data.set_format('torch')
-    if val_ds is not None:
-        with accelerator.main_process_first():
-            val_data = val_ds.map(
-                preprocess_function,
-                batched=True,
-                load_from_cache_file=True,
-                num_proc=4,
-                remove_columns=column_names,
-                fn_kwargs={'src_max_length': eval_max_source_length, 'tgt_max_length': eval_max_target_length}
-            )
-        val_data.set_format('torch')
-    else:
-        val_data = None
-        
-    if local_rank == 0:
-        print('================ dataset examples ================')
-        print('max length: ', max([len(d) for d in train_data['input_ids']]))
-        print(tokenizer.batch_decode(train_data['input_ids'][:2]))
-        print(tokenizer.batch_decode(train_data['labels'][:2]))
-        print(train_data[0])
-        print(train_data[1])
+    # ---- Data collator ----------------------------------------------------
+    collator = DataCollatorForSeq2Seq(tok, model=model)
 
-    eval_steps = 1 / num_train_epochs
-    warmup_ratio = 1 / num_train_epochs
-    adam_beta1, adam_beta2 = adam_betas
-    # Initialize our Trainer
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=Seq2SeqTrainingArguments(
-            per_device_train_batch_size=micro_batch_size,
-            per_device_eval_batch_size=eval_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_steps=warmup_steps,
-            num_train_epochs=num_train_epochs,
-            learning_rate=learning_rate,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            fp16=True,
-            logging_strategy="steps",
-            logging_steps=logging_steps,
-            log_level="info",
-            logging_first_step=True,
-            disable_tqdm=False,
-            lr_scheduler_type=lr_scheduler_type,
-            optim=optim,
-            eval_strategy="steps",
-            save_strategy="steps",
-            eval_steps=eval_steps,
-            save_steps=eval_steps,
-            output_dir=output_dir,
-            save_total_limit=10,
-            ddp_find_unused_parameters=True if ddp else None,
-            group_by_length=group_by_length,
-            report_to="all",
-            label_smoothing_factor=label_smoothing_factor,
-            load_best_model_at_end=True,
-            tf32=use_tf32,
-        ),
-        train_dataset=train_data,
-        eval_dataset=val_data,
-        tokenizer=tokenizer,
-        data_collator=DataCollatorForSeq2Seq(
-            tokenizer,
-            model=model,
-            label_pad_token_id=-100,
-            pad_to_multiple_of=8,  
-        ),
-        callbacks=[transformers.EarlyStoppingCallback(early_stopping_patience=patience)]
+    # ---- TrainingArguments ------------------------------------------------
+    training_args = Seq2SeqTrainingArguments(
+        output_dir=args.output_dir,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        save_total_limit=3,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        num_train_epochs=args.num_train_epochs,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        predict_with_generate=True,
+        fp16=True,                        # bf16=True if A100
+        bf16=args.isbf16,
+        report_to=["wandb"],
+        logging_steps=500,
+        dataloader_num_workers=2,
+        load_best_model_at_end=True,
+        metric_for_best_model="loss"
     )
 
-    # Training
-    trainer.train()
-    trainer.save_model(os.path.join(output_dir, 'best-model'))  # Saves the tokenizer too for easy upload
+    # ---- Trainer ----------------------------------------------------------
+    trainer = Seq2SeqTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenised["train"],
+        eval_dataset=tokenised["validation"],
+        tokenizer=tok,
+        data_collator=collator
+    )
 
-if __name__ == '__main__':
-    fire.Fire(main)
+    trainer.train()
+    trainer.save_model(args.output_dir)
+    tok.save_pretrained(args.output_dir)
+    wandb.finish()
+
+
+if __name__ == "__main__":
+    main()
