@@ -43,10 +43,10 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
     p.add_argument("--wandb_api_key", type=str, default=None)
-    p.add_argument("--word_segment", action="store_true",
+    p.add_argument("--word_segment", type=bool, default=True,
                    help="Run VNCoreNLP word segmentation before tokenisation "
                         "(required for bartpho-word checkpoints)")
-    p.add_argument("--isbf16", action="store_false",
+    p.add_argument("--isbf16", type=bool, default= False,
                    help="Use bf16 instead of fp16")
     return p
 
@@ -136,7 +136,7 @@ def main():
         num_train_epochs=args.num_train_epochs,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         predict_with_generate=True,
-        fp16=True,                        # bf16=True if A100
+        fp16=(not args.isbf16),                        # bf16=True if A100
         bf16=args.isbf16,
         report_to=["wandb"],
         logging_steps=500,
