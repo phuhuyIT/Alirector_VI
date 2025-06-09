@@ -10,7 +10,7 @@ Usage (Colab GPU):
 """
 
 import os, argparse, wandb
-from datasets import load_dataset, load_metric, disable_progress_bar, DatasetDict
+from datasets import load_dataset, DatasetDict
 from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
                           DataCollatorForSeq2Seq, Seq2SeqTrainer,
                           Seq2SeqTrainingArguments)
@@ -40,8 +40,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--num_train_epochs", type=int, default=6)
     p.add_argument("--gradient_accumulation_steps", type=int, default=64)
     # wandb
-    p.add_argument("--wandb_project", type=str)
-    p.add_argument("--wandb_entity", type=str, default=None)
+    p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
+    p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
     p.add_argument("--wandb_api_key", type=str, default=None)
     p.add_argument("--word_segment", action="store_true",
                    help="Run VNCoreNLP word segmentation before tokenisation "
@@ -73,7 +73,7 @@ def main():
     # ---- Weights & Biases login ------------------------------------------
     if args.wandb_api_key:
         os.environ["WANDB_API_KEY"] = args.wandb_api_key
-    wandb.init(project=args.wandb_project, entity=args.wandb_entity,
+        wandb.init(project=args.wandb_project, entity=args.wandb_entity,
                name=os.path.basename(args.output_dir),
                config=vars(args))
 
