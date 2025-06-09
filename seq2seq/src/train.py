@@ -21,7 +21,7 @@ except ImportError:
     VnCoreNLP = None  # will raise later if user requests word segmentation
 from typing import List
 
-#disable_progress_bar()   # tidy Colab logs
+ disable_progress_bar()   # tidy Colab logs
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -38,7 +38,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--learning_rate", type=float, default=3e-5)
     p.add_argument("--weight_decay", type=float, default=0.01)
     p.add_argument("--num_train_epochs", type=int, default=6)
-    p.add_argument("--gradient_accumulation_steps", type=int, default=64)
+    p.add_argument("--gradient_accumulation_steps", type=int, default=4)
     # wandb
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")

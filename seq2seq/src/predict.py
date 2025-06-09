@@ -1,170 +1,150 @@
-import os
-import sys
-import json
-import torch
-import argparse
+#!/usr/bin/env python
+"""
+Generate draft corrections Ŷ for every X in a dataset (Stage-2 Alirector).
+
+Example (Colab):
+
+    python -m src.predict \
+        --model_path runs/bartpho-syl-gec \
+        --dataset_name bmd1905/vi-error-correction-v2 \
+        --split train \
+        --output_dir data/stage2/train_pred
+
+    # bartpho-word, with auto word-segmentation
+    python -m src.predict \
+        --model_path runs/bartpho-word-gec \
+        --dataset_name bmd1905/vi-error-correction-v2 \
+        --split train \
+        --output_dir data/stage2/train_pred
+"""
+import argparse, os, torch, json
+from functools import lru_cache
 from tqdm import tqdm
-from transformers import BartForConditionalGeneration, AutoTokenizer, GenerationConfig, BartConfig, PreTrainedModel
-# OpenCC removed – Chinese conversion no longer required
-from typing import *
-import re
-import fire
-from models.modeling_copy import BartForConditionalGenerationWithCopyMech
-from models.modeling_bart_dropsrc import BartForConditionalGenerationwithDropoutSrc
-import math
+from datasets import load_dataset, load_from_disk, DatasetDict
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
 try:
-    import wandb
+    from py_vncorenlp import VnCoreNLP   # optional
 except ImportError:
-    wandb = None
+    VnCoreNLP = None
 
-model_cls_dict = {
-    'BartForConditionalGenerationWithCopyMech': BartForConditionalGenerationWithCopyMech,
-    'BartForConditionalGeneration': BartForConditionalGeneration,
-    'BartForConditionalGenerationwithDropoutSrc': BartForConditionalGenerationwithDropoutSrc,
-}
 
-def split_sentence(text, max_length=64):
-    split_texts = []
-    for idx in range(0, len(text), max_length):
-        split_texts.append(text[idx:idx+max_length])
-    return split_texts
+# --------------------------------------------------------------------------
+# Word-segmentation helpers (only needed for bartpho-word checkpoints)
+# --------------------------------------------------------------------------
+@lru_cache(maxsize=1)
+def get_segmenter():
+    if VnCoreNLP is None:
+        raise RuntimeError("py_vncorenlp not installed — "
+                           "pip install py_vncorenlp && ensure Java ≥8")
+    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
 
-def batch_split_sentence(texts, max_length=64):
-    split_texts = []
-    ids = []
-    i = 0
-    for text in texts:
-        res = split_sentence(text, max_length)
-        split_texts.extend(res)
-        ids.append((i, i+len(res)-1))
-        i += len(res)
-        
-    return split_texts, ids
-        
-def main(
-    model_path: str = "",
-    input_path: str = "",
-    batch_size: int = 400,
-    output_path: str = "",
-    split_length=100,
-    if_split: bool = False,     # whether or not to split long sentence into short ones before inference
-    max_target_length: int = 128,
-    temperature: float = 1,
-    num_beams: int = 2,
-    src_dropout=0.2,
-    use_wandb: bool = False,
-    wandb_project: str = "Alirector_Vi",
-    wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
-    wandb_api_key: str = "",
-    fp16: bool = False,  # New argument to control FP16 usage
-    max_source_length: int = 1022,  # Prevent exceeding positional embedding limit (1024 - 2 offset)
-):     
-    # Vietnamese dataset: no Chinese conversion needed.
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-    
-    # Always load standard HF BartForConditionalGeneration to avoid custom encoder issues
-    model = BartForConditionalGeneration.from_pretrained(model_path)
-    print("Using standard BartForConditionalGeneration for inference")
-    
-    # NOTE: On some GPUs (e.g. T4 / P100) running scaled_dot_product_attention in FP16 can
-    # trigger the dreaded "device-side assert triggered" error. We therefore make FP16 optional.
-    # By default, run in FP32 unless the user explicitly sets `--fp16 True`.
-    if fp16:
-        try:
-            model.half()
-        except Exception as e:
-            print(f"[WARN] Falling back to FP32 because model.half() failed: {e}")
-    model.cuda()
+
+def segment_sentences(batch):
+    seg = get_segmenter()
+    tok_lists = seg.word_segment(batch["input"])
+    batch["input"] = [" ".join(tok_lists)]
+    return batch
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+def build_argparser():
+    p = argparse.ArgumentParser()
+    p.add_argument("--model_path", required=True,
+                   help="Path or HF id of the fine-tuned Stage-1 model")
+    p.add_argument("--dataset_name", type=str,
+                   help="HF dataset id or path (if previously saved)")
+    p.add_argument("--dataset_path", type=str,
+                   help="Local path created by save_to_disk(); "
+                        "takes precedence over --dataset_name")
+    p.add_argument("--split", type=str, default="train",
+                   help="Dataset split to run prediction on")
+    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--beam_size", type=int, default=5)
+    p.add_argument("--max_len", type=int, default=192)
+    p.add_argument("--output_dir", required=True)
+    p.add_argument("--word_segment", type=bool, default=False,
+                   help="Force VNCoreNLP segmentation regardless of checkpoint")
+    p.add_argument("--fp16", type=bool, default=False,
+                   help="Generate in FP16 (recommended on L4/A100)")
+    return p
+
+
+# --------------------------------------------------------------------------
+# Main
+# --------------------------------------------------------------------------
+def main():
+    args = build_argparser().parse_args()
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Detect whether we need word segmentation
+    auto_word = "word" in os.path.basename(args.model_path).lower()
+    do_segment = args.word_segment or auto_word
+
+    # Load model + tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path, use_fast=True)
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_path,
+                                                  torch_dtype=torch.float16
+                                                  if args.fp16 else None)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
     model.eval()
-    model.config.use_cache = True
-    
-    if input_path.endswith('.json'):
-        # load JSONL (one object per line) or JSON array
-        with open(input_path, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-        if content.startswith('['):
-            data = json.loads(content)
-        else:
-            data = [json.loads(line) for line in content.splitlines() if line.strip()]
-        texts = [line['source'] for line in data]
-    else:
-        with open(input_path, 'r', encoding='utf-8') as f:
-            texts = [line.strip().split('\t')[-1] for line in f.readlines()]
-    
-    total_samples = len(texts)
-    if use_wandb and wandb is not None:
-        wandb.login(key=wandb_api_key)
-        wandb.init(project=wandb_project, entity=wandb_entity, config={
-            "model_path": model_path,
-            "input_path": input_path,
-            "batch_size": batch_size,
-            "num_beams": num_beams,
-            "split_length": split_length,
-            "if_split": if_split,
-            "max_target_length": max_target_length,
-            "temperature": temperature,
-        })
-    elif use_wandb and wandb is None:
-        print("wandb library not available; skipping WandB logging.")
 
-    processed = 0
-    batch_size = batch_size // num_beams
-    pred_texts = []
-    for idx in tqdm(range(0, len(texts), batch_size), desc="Predicting", ncols=100):
-        batch_texts = texts[idx:idx+batch_size]
-        if if_split:
-            split_texts, ids = batch_split_sentence(batch_texts, split_length)
-        else:
-            split_texts = batch_texts
-        inputs = tokenizer(
-            split_texts,
-            padding=True,
-            truncation=True,
-            max_length=max_source_length,
-            return_tensors='pt',
-            return_token_type_ids=False,
-        )
-        inputs = {k:v.cuda() for k, v in inputs.items()}
-        generation_config = GenerationConfig(
-            num_beams=num_beams,  
-            temperature=temperature,
-            max_new_tokens=max_target_length,
-        )
+    # Load dataset
+    if args.dataset_path:
+        dataset = load_from_disk(args.dataset_path)[args.split]
+    else:
+        dataset = load_dataset(args.dataset_name, split=args.split,
+                               streaming=False)
+
+    # Optional segmentation
+    if do_segment:
+        dataset = dataset.map(segment_sentences,
+                              batched=True, batch_size=1024,
+                              num_proc=1)
+
+    # Generation loop -------------------------------------------------------
+    def generate_batch(batch):
         with torch.no_grad():
-            pred_ids = model.generate(
+            inputs = tokenizer(batch["input"],
+                               padding=True,
+                               truncation=True,
+                               max_length=args.max_len,
+                               return_tensors="pt").to(device)
+            gen_ids = model.generate(
                 **inputs,
-                generation_config=generation_config,
+                num_beams=args.beam_size,
+                max_length=args.max_len,
+                early_stopping=True
             )
-        preds = tokenizer.batch_decode(pred_ids.detach().cpu(), skip_special_tokens=True)
-        
-        if if_split:
-            for start, end in ids:
-                pred_text = ' '.join(preds[start:end+1])
-                pred_texts.append(pred_text)
-        else:
-            pred_texts.extend(preds)
-        
-        processed += len(batch_texts)
-        if use_wandb and wandb is not None:
-            wandb.log({"processed": processed, "progress": processed / total_samples})
-    
+            preds = tokenizer.batch_decode(gen_ids,
+                                           skip_special_tokens=True,
+                                           clean_up_tokenization_spaces=True)
+            batch["pred"] = preds
+        return batch
 
-    if output_path.endswith('.json'):
-        for line, pred in zip(data, pred_texts):
-            line['pred'] = pred
-        
-        with open(output_path, 'w', encoding='utf-8') as o:
-            json.dump(data, o, ensure_ascii=False, indent=1)
-    else:
-        with open(output_path, 'w', encoding='utf-8') as o:
-            o.write('\n'.join(pred_texts))
+    dataset = dataset.map(generate_batch,
+                          batched=True,
+                          batch_size=args.batch_size,
+                          remove_columns=[c for c in dataset.column_names
+                                          if c not in ("input", "output")])
 
-    if use_wandb and wandb is not None:
-        if os.path.exists(output_path):
-            artifact = wandb.Artifact('predictions', type='result')
-            artifact.add_file(output_path)
-            wandb.log_artifact(artifact)
-        wandb.finish()
+    # Rename gold column -> target for clarity
+    dataset = dataset.rename_column("output", "target")
+
+    # Save to disk for Stage-2 training
+    dataset.save_to_disk(args.output_dir)
+
+    # Also dump a small JSONL preview for sanity-check
+    preview_path = os.path.join(args.output_dir, "head10.jsonl")
+    with open(preview_path, "w", encoding="utf8") as fo:
+        for ex in dataset.select(range(10)):
+            fo.write(json.dumps(ex, ensure_ascii=False) + "\n")
+    print(f"✓ Saved Stage-2 data to {args.output_dir}")
+    print(f"  Preview → {preview_path}")
+
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    main()
