@@ -46,7 +46,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--word_segment", action="store_true",
                    help="Run VNCoreNLP word segmentation before tokenisation "
                         "(required for bartpho-word checkpoints)")
-    p.add_argument("--isbf16", action="store_true",
+    p.add_argument("--isbf16", action="store_false",
                    help="Use bf16 instead of fp16")
     return p
 
@@ -55,15 +55,17 @@ def build_argparser() -> argparse.ArgumentParser:
 @lru_cache(maxsize=1)
 def get_segmenter():
     """Lazy-load VNCoreNLP only once (fork-safe)."""
-    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
+    return VnCoreNLP(save_dir= "/content/vncorenlp",
+                annotators=["wseg"])
 
 
 def segment_batch(texts):
     """Segment a list of raw sentences -> list of 'word1_word2' strings."""
+    
     seg = get_segmenter()
     # seg.tokenize expects List[str] and returns List[List[str]]
-    out = seg.tokenize(texts)
-    return [" ".join(line) for line in out]
+    out = seg.word_segment(texts)
+    return " ".join(out)
 
 def main():
     args = build_argparser().parse_args()
