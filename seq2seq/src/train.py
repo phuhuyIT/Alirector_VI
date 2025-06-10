@@ -20,8 +20,8 @@ try:
 except ImportError:
     VnCoreNLP = None  # will raise later if user requests word segmentation
 from typing import List
-
-disable_progress_bar()   # tidy Colab logs
+from transformers.utils.logging import disable_progress_bar
+disable_progress_bar()
 
 
 def build_argparser() -> argparse.ArgumentParser:
