@@ -17,7 +17,8 @@ Example (Colab):
         --split train \
         --output_dir data/stage2/train_pred
 """
-import argparse, os, torch, json
+import argparse, os, torch, json, time
+import wandb
 from functools import lru_cache
 from tqdm import tqdm
 from datasets import load_dataset, load_from_disk, DatasetDict
@@ -65,6 +66,9 @@ def build_argparser():
     p.add_argument("--beam_size", type=int, default=5)
     p.add_argument("--max_len", type=int, default=192)
     p.add_argument("--output_dir", required=True)
+    p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
+    p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
+    p.add_argument("--wandb_api_key", type=str, default=None)
     p.add_argument("--word_segment", type=bool, default=False,
                    help="Force VNCoreNLP segmentation regardless of checkpoint")
     p.add_argument("--fp16", type=bool, default=False,
@@ -79,6 +83,15 @@ def main():
     args = build_argparser().parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # ---- Weights & Biases login ------------------------------------------
+    use_wandb = bool(args.wandb_project)
+    if use_wandb:
+        if args.wandb_api_key:
+            os.environ["WANDB_API_KEY"] = args.wandb_api_key
+        wandb.init(project=args.wandb_project,
+                   entity=args.wandb_entity,
+                   name=f"predict-{os.path.basename(args.model_path)}",
+                   config=vars(args))
     # Detect whether we need word segmentation
     auto_word = "word" in os.path.basename(args.model_path).lower()
     do_segment = args.word_segment or auto_word
@@ -106,6 +119,8 @@ def main():
                               num_proc=1)
 
     # Generation loop -------------------------------------------------------
+    seen = 0
+    t0 = time.time()
     def generate_batch(batch):
         with torch.no_grad():
             inputs = tokenizer(batch["input"],
@@ -123,6 +138,15 @@ def main():
                                            skip_special_tokens=True,
                                            clean_up_tokenization_spaces=True)
             batch["pred"] = preds
+            if use_wandb:
+                nonlocal seen
+                seen += len(batch["input"])
+                elapsed = time.time() - t0
+                wandb.log({
+                    "sentences_processed": seen,
+                    "sentences_per_sec": seen / elapsed,
+                    "avg_latency_ms": 1000 * elapsed / seen
+                })
         return batch
 
     dataset = dataset.map(generate_batch,
@@ -136,7 +160,12 @@ def main():
 
     # Save to disk for Stage-2 training
     dataset.save_to_disk(args.output_dir)
-
+    # -------------- log preview table to W&B ------------------------------
+    if use_wandb:
+        import pandas as pd
+        preview_df = pd.DataFrame(dataset.select(range(min(20, len(dataset)))))
+        wandb.log({"preview": wandb.Table(dataframe=preview_df)})
+        wandb.finish()
     # Also dump a small JSONL preview for sanity-check
     preview_path = os.path.join(args.output_dir, "head10.jsonl")
     with open(preview_path, "w", encoding="utf8") as fo:
