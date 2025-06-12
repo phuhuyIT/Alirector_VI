@@ -140,11 +140,17 @@ def main():
 
     # tokenise once for all three models (same tokenizer/vocab)
     def tok_fn(batch):
-        model_in = tok(batch["source"], truncation=True, max_length=192)
+        model_inputs = tok(batch["source"],
+                           truncation=True,
+                           padding="longest",
+                           max_length=args.max_source_len)
         with tok.as_target_tokenizer():
-            labels = tok(batch["labels_text"], truncation=True, max_length=192)
-        model_in["labels"] = labels["input_ids"]
-        return model_in
+            labels = tok(batch["labels_text"],
+                         truncation=True,
+                         padding="longest",
+                         max_length=args.max_target_len)
+        model_inputs["labels"] = labels["input_ids"]
+        return model_inputs
 
     train_tok = train_ds.map(tok_fn, batched=True,
                              remove_columns=train_ds.column_names)
