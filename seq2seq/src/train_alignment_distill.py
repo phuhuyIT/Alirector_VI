@@ -50,7 +50,8 @@ def build_argparser():
     p.add_argument("--grad_accum", type=int, default=4)
     p.add_argument("--fp16", action="store_true")
     p.add_argument("--val_ratio", type=float, default=0.2)
-
+    p.add_argument("--max_source_len", type=int, default=256)
+    p.add_argument("--max_target_len", type=int, default=192)
     # W&B
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
