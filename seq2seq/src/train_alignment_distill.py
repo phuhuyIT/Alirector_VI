@@ -200,8 +200,8 @@ def main():
             "labels": lab_enc["input_ids"]
         }
 
-    train_ds = train_ds.map(preprocess, batched=True, remove_columns=train_ds.column_names)
-    val_ds = val_ds.map(preprocess, batched=True, remove_columns=val_ds.column_names)
+    train_ds = train_ds.map(preprocess, batched=True, cache_file_names=None,remove_columns=train_ds.column_names)
+    val_ds = val_ds.map(preprocess, batched=True, cache_file_names=None,remove_columns=val_ds.column_names)
 
     collator = DistilCollator(tok)
 
