@@ -47,7 +47,7 @@ def build_argparser():
     p.add_argument("--lr",    type=float, default=3e-5)
     p.add_argument("--batch", type=int,   default=4)
     p.add_argument("--epochs", type=int,  default=3)
-    p.add_argument("--grad_accum", type=int, default=64)
+    p.add_argument("--grad_accum", type=int, default=4)
     p.add_argument("--fp16", action="store_true")
     p.add_argument("--val_ratio", type=float, default=0.2)
 
