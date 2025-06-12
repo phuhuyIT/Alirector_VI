@@ -179,6 +179,7 @@ def main():
         learning_rate=args.learning_rate,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         eval_strategy="epoch",
+        save_strategy="epoch",
         save_total_limit=3,
         predict_with_generate=True,
         generation_num_beams=args.beam_size,
