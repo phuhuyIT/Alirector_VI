@@ -113,13 +113,16 @@ def main():
     model.to(device)
 
     # ---------- load Stage-2 dataset ---------------------------------------
-    ds_all = load_from_disk(args.dataset_dir)
-    if isinstance(ds_all, DatasetDict):   # predict.py can save splits
-        dataset = ds_all["train"]
-        dev = ds_all.get("validation", None)
+    ds = load_from_disk(args.dataset_dir)
+    if isinstance(ds, DatasetDict) and "validation" in ds:
+        dataset = ds["train"]
+        dev = ds["validation"]
     else:
-        dataset = ds_all
-        dev = None
+        # --- NEW 80/20 split ------------------------------------------------
+        print(f"No validation split found; creating {int(0.2*100)}% "
+              f"hold-out from the loaded data")
+        split = ds.train_test_split(test_size=0.2, seed=42)
+        dataset, dev = split["train"], split["test"]
 
     # ---------- build alignment input --------------------------------------
     sep_tok = tokenizer.eos_token  # "</s>" for BARTpho
