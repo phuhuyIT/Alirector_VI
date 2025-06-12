@@ -45,8 +45,8 @@ def maybe_segment(texts, seg_needed):
     if not seg_needed:
         return texts
     seg = get_segmenter()
-    outs = seg.tokenize(texts)
-    return [" ".join(ws) for ws in outs]
+    outs = seg.word_segment(texts)
+    return " ".join(outs)
 
 
 # ---------------------------------------------------------------------------
