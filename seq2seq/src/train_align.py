@@ -73,6 +73,7 @@ def build_argparser():
     # misc
     p.add_argument("--beam_size", type=int, default=5)
     p.add_argument("--fp16", action="store_true")
+
     # word-seg flag
     p.add_argument("--word_segment", action="store_true",
                    help="Force VNCoreNLP segmentation")
@@ -187,6 +188,7 @@ def main():
         predict_with_generate=True,
         generation_num_beams=args.beam_size,
         fp16=args.fp16,
+
         report_to=["wandb"],
         logging_steps=200,
         metric_for_best_model="loss",

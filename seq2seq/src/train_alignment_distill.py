@@ -1,390 +1,187 @@
-from typing import Optional, Sequence, Dict
-import fire
-import argparse
-import json
-import os
-import random
-import sys
-import nltk
-import wandb
+#!/usr/bin/env python
+"""
+Stage-3 of Alirector — distil forward & reverse alignment teachers
+into the original correction model (student).
 
-import numpy as np
-import torch
-import transformers
-from transformers import (
-    AutoTokenizer,
-    DataCollatorForSeq2Seq,
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    BartForConditionalGeneration,
-    set_seed,
-    DefaultDataCollator,
-    BartConfig,
-)
-from transformers.trainer_pt_utils import nested_detach
-from transformers.trainer import logger
-from transformers.trainer_utils import is_main_process
-from datasets import load_dataset
+◦ student  : BARTpho-(syllable|word) checkpoint from Stage-1
+◦ teachers : forward & reverse alignment checkpoints from Stage-2
+◦ data     : folder created by predict.py    (columns: input, pred, target)
+"""
 
-import sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import os, argparse, torch, wandb
+from functools import lru_cache
+from datasets import load_from_disk
+import torch.nn.functional as F
+from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
+                          Seq2SeqTrainingArguments, Seq2SeqTrainer)
 
-from dataclasses import dataclass
-from models.modeling_alignment_distill_bart import AlignmentDistillBART
-from models.modeling_bart_dropsrc import BartForConditionalGenerationwithDropoutSrc
-import torch.nn as nn
-from typing import Union, List, Tuple, Dict, Optional, Any
+# ───── optional word-segmentation ────────────────────────────────────────────
+try:
+    from py_vncorenlp import VnCoreNLP          # :contentReference[oaicite:1]{index=1}
+except ImportError:
+    VnCoreNLP = None
 
-@dataclass
-class Seq2SeqDistillDataCollator:
-    pad_token_id: int = 0
-    label_pad_token_id: int = -100
-    max_cor_length: int = 128
-    max_align_length: int = 128
-    max_target_length: int = 128
-    
-    def __call__(self, batch):
-        input_ids_list = []
-        align_input_ids_list = []
-        align_reverse_input_ids_list = []
-        labels_list = []
-        
-        for b in batch:
-            input_ids = b['input_ids']
-            pad_cor_length = self.max_cor_length - len(input_ids)
-            input_ids = input_ids + [self.pad_token_id] * pad_cor_length
-            
-            align_input_ids = b['align_input_ids']
-            pad_align_length = self.max_align_length - len(align_input_ids)
-            align_input_ids = align_input_ids + [self.pad_token_id] * pad_align_length
-            
-            align_reverse_input_ids = b['align_reverse_input_ids']
-            pad_align_reverse_length = self.max_align_length - len(align_reverse_input_ids)
-            align_reverse_input_ids = align_reverse_input_ids + [self.pad_token_id] * pad_align_reverse_length
-            
-            labels = b['labels']
-            pad_label_length = self.max_target_length - len(labels)
-            labels = labels + [self.label_pad_token_id] * pad_label_length
-            
-            input_ids_list.append(input_ids)
-            align_input_ids_list.append(align_input_ids)
-            align_reverse_input_ids_list.append(align_reverse_input_ids)
-            labels_list.append(labels)
-            
-        input_ids = torch.tensor(input_ids_list)
-        attention_mask = input_ids.ne(self.pad_token_id).long()
-        align_input_ids = torch.tensor(align_input_ids_list)
-        align_attention_mask = align_input_ids.ne(self.pad_token_id).long()
-        align_reverse_input_ids = torch.tensor(align_reverse_input_ids_list)
-        align_reverse_attention_mask = align_reverse_input_ids.ne(self.pad_token_id).long()
-        labels = torch.tensor(labels_list)
-        
-        results = {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'align_input_ids': align_input_ids,
-            'align_attention_mask': align_attention_mask,
-            'align_reverse_input_ids': align_reverse_input_ids,
-            'align_reverse_attention_mask': align_reverse_attention_mask,
-            'labels': labels
-        }
-        return results
+def segment_batch(texts):
+    seg = get_segmenter()
+    return [" ".join(ws) for ws in seg.tokenize(texts)]
 
-class MyTrainer(Seq2SeqTrainer):
-    def save_model(self, output_dir: str | None = None, _internal_call: bool = False):
-        output_dir = output_dir if output_dir is not None else self.args.output_dir
-        os.makedirs(output_dir, exist_ok=True)
-        
-        self.model.save(output_dir)
+@lru_cache(maxsize=1)
+def get_segmenter():
+    if VnCoreNLP is None:
+        raise RuntimeError("pip install py_vncorenlp and install Java ≥8")
+    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
 
-        if self.tokenizer is not None:
-            self.tokenizer.save_pretrained(output_dir)
+# ───── argument parser ───────────────────────────────────────────────────────
+def build_argparser():
+    p = argparse.ArgumentParser()
+    p.add_argument("--dataset_dir", required=True)
+    p.add_argument("--student_path", required=True)
+    p.add_argument("--teacher_fwd_path", required=True)
+    p.add_argument("--teacher_rev_path", required=True)
+    p.add_argument("--output_dir", required=True)
 
-        torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
-        
-    def _load_best_model(self):
-        logger.info(f"Loading best model from {self.state.best_model_checkpoint} (score: {self.state.best_metric}).")
-        best_model_path = os.path.join(self.state.best_model_checkpoint, "pytorch_model.bin")
-        if os.path.exists(best_model_path):
-            state_dict = torch.load(best_model_path, map_location="cpu")
-            load_result = self.model.cor_bart.load_state_dict(state_dict, False)
-        else:
-            logger.warning(
-                f"Could not locate the best model at {best_model_path}, if you are running a distributed training "
-                "on multiple nodes, you should activate `--save_on_each_node`."
-            )
-    
-    def prediction_step(
-        self,
-        model: nn.Module,
-        inputs: Dict[str, Union[torch.Tensor, Any]],
-        prediction_loss_only: bool,
-        ignore_keys: Optional[List[str]] = None,
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
-        inputs = self._prepare_inputs(inputs)
-        if ignore_keys is None:
-            if hasattr(self.model, "config"):
-                ignore_keys = getattr(self.model.config, "keys_to_ignore_at_inference", [])
-            else:
-                ignore_keys = []
+    # train & KD hyper-params
+    p.add_argument("--alpha", type=float, default=0.5)   # weigh fwd teacher
+    p.add_argument("--beta",  type=float, default=1.5)   # KD vs NLL
+    p.add_argument("--tau",   type=float, default=1.0)
+    p.add_argument("--lr",    type=float, default=3e-5)
+    p.add_argument("--batch", type=int,   default=4)
+    p.add_argument("--epochs", type=int,  default=3)
+    p.add_argument("--grad_accum", type=int, default=64)
+    p.add_argument("--fp16", action="store_true")
+    p.add_argument("--val_ratio", type=float, default=0.2)
 
+    # W&B
+    p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
+    p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
+    p.add_argument("--wandb_api_key", type=str, default=None)
+    p.add_argument("--word_segment",  action="store_true")
+    return p
+
+# ───── custom Trainer to add KD loss ─────────────────────────────────────────
+class DistilTrainer(Seq2SeqTrainer):
+    def __init__(self, teacher_fwd, teacher_rev, alpha, beta, tau, *args, **kw):
+        super().__init__(*args, **kw)
+        self.teacher_fwd, self.teacher_rev = teacher_fwd, teacher_rev
+        self.alpha, self.beta, self.tau = alpha, beta, tau
+        for t in (self.teacher_fwd, self.teacher_rev):
+            t.eval(); t.requires_grad_(False)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs["labels"]
+        # ─ student forward pass ─
+        outputs_stu = model(**{k: v for k, v in inputs.items()
+                               if k != "labels"})
+        logits_stu = outputs_stu.logits
+        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
+        loss_nll = loss_fct(logits_stu.view(-1, logits_stu.size(-1)),
+                            labels.view(-1))
+
+        # ─ teacher logits (no_grad) ─
         with torch.no_grad():
-            outputs = model(**inputs)
-            loss = outputs["lm_loss"]
-            loss = loss.mean().detach()
+            logits_fwd = self.teacher_fwd(**inputs).logits
+            logits_rev = self.teacher_rev(**inputs).logits
 
-            if isinstance(outputs, dict):
-                logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
-            else:
-                logits = outputs[1:]
+        # ─ KL distillation ─
+        t = self.tau
+        log_p_stu = F.log_softmax(logits_stu / t, dim=-1)
+        p_fwd = F.softmax(logits_fwd / t, dim=-1)
+        p_rev = F.softmax(logits_rev / t, dim=-1)
 
-        if prediction_loss_only:
-            return (loss, None, None)
+        kl_fwd = F.kl_div(log_p_stu, p_fwd, reduction="batchmean") * (t**2)
+        kl_rev = F.kl_div(log_p_stu, p_rev, reduction="batchmean") * (t**2)
+        loss_kd = self.alpha * kl_fwd + (1 - self.alpha) * kl_rev
 
-        logits = nested_detach(logits)
-        if len(logits) == 1:
-            logits = logits[0]
+        loss = loss_nll + self.beta * loss_kd
+        return (loss, outputs_stu) if return_outputs else loss
 
-        labels = None
-        return (loss, logits, labels)
-        
-def main(
-    # model/data params
-    cor_bart_path: str = "",
-    align_bart_path: str = "",
-    reverse_align_bart_path: str = "",
-    data_path: str = "",
-    output_dir: str = "",
-    # training hyperparams
-    batch_size: int = 4,
-    micro_batch_size: int = 2,     
-    num_train_epochs: int = 5,
-    learning_rate: float = 1e-5,
-    val_set_size: int = 100,
-    seed: int = 42,
-    warmup_ratio : float = 0.1,
-    group_by_length: bool = False,
-    max_cor_length: int = 128,
-    max_align_length: int = 128,    # src + [sep] + pred
-    max_target_length: int = 128,
-    label_smoothing_factor: float = 0.0,
-    kl_loss_weight: float = 0.1,
-    alpha: float = 0.5,
-    distill_way: str = 'average_loss',    # 'average_logits' or 'average_loss
-    kl_loss_type: str = 'forward-kl',     # 'both', 'forward-kl', 'reverse-kl'
-    logging_steps: int = 5,
-    transformer: bool = False,
-    lr_scheduler_type: str = "linear",
-    optim: str = "adamw_torch",
-    patience: int = 5,
-    warmup_steps: int = 2000,
-    adam_betas: tuple = (0.9, 0.999),
-    dropout: float=0.1,
-    src_dropout: float=0.2,
-    from_scratch: bool=False,
-    force_bart: bool = False,
-    use_tf32: bool = True,
-    use_wandb: bool = False,
-    wandb_project: str = "Alirector_Vi",
-    wandb_entity: str = "phuhuy02003-university-of-transport-and-communications",
-    wandb_api_key: str = "",
-):
-    set_seed(seed)
-    torch.backends.cuda.matmul.allow_tf32 = use_tf32
-    torch.backends.cudnn.allow_tf32 = use_tf32
-    # WandB init
-    if use_wandb:
-        wandb.login(key=wandb_api_key)
-        wandb.init(project=wandb_project, entity=wandb_entity)
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    device_map = local_rank    
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    ddp = world_size != 1
-    gradient_accumulation_steps = batch_size // micro_batch_size
-    if ddp:
-        gradient_accumulation_steps = gradient_accumulation_steps // world_size
-    
-    # Set the verbosity to info of the Transformers logger (on main process only):
-    if is_main_process(local_rank):
-        transformers.utils.logging.set_verbosity_info()
+# ───── main ─────────────────────────────────────────────────────────────────
+def main():
+    args = build_argparser().parse_args()
+    os.makedirs(args.output_dir, exist_ok=True)
+    if args.wandb_api_key:
+        os.environ["WANDB_API_KEY"] = args.wandb_api_key
+    wandb.init(project=args.wandb_project, entity=args.wandb_entity,
+               name=os.path.basename(args.output_dir), config=vars(args))
 
-    tokenizer = AutoTokenizer.from_pretrained(cor_bart_path, use_fast=False)
-    sep_token = tokenizer.sep_token or tokenizer.eos_token or "</s>"
-    tokenizer.model_input_names = ["input_ids", "attention_mask", "align_input_ids", "align_attention_mask"]
-    
-    if force_bart:
-        cor_bart = BartForConditionalGeneration.from_pretrained(cor_bart_path)
+    auto_word = "word" in args.student_path.lower()
+    seg_needed = auto_word or args.word_segment
+
+    tok = AutoTokenizer.from_pretrained(args.student_path, use_fast=True)
+    student = AutoModelForSeq2SeqLM.from_pretrained(
+        args.student_path,
+        torch_dtype=torch.float16 if args.fp16 else None)
+    teacher_fwd = AutoModelForSeq2SeqLM.from_pretrained(
+        args.teacher_fwd_path, torch_dtype=torch.float16 if args.fp16 else None)
+    teacher_rev = AutoModelForSeq2SeqLM.from_pretrained(
+        args.teacher_rev_path, torch_dtype=torch.float16 if args.fp16 else None)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    student.to(device); teacher_fwd.to(device); teacher_rev.to(device)
+
+    ds = load_from_disk(args.dataset_dir)
+    if "validation" in ds:
+        train_ds, val_ds = ds["train"], ds["validation"]
     else:
-        if transformer:      # transformer
-            dropout=dropout
-            activation_function='relu'
-            activation_dropout=0.0
-            attention_dropout=0.0
-            max_position_embeddings=512
-            # cor_bart
-            cor_bart_config = BartConfig.from_pretrained(cor_bart_path, dropout=dropout,
-                                                activation_function=activation_function,
-                                                activation_dropout=activation_dropout,
-                                                attention_dropout=attention_dropout,
-                                                max_position_embeddings=max_position_embeddings)
-            if from_scratch:
-                cor_bart = BartForConditionalGenerationwithDropoutSrc(config=cor_bart_config, src_dropout=src_dropout)
-            else:
-                cor_bart = BartForConditionalGenerationwithDropoutSrc.from_pretrained(cor_bart_path, src_dropout=src_dropout)
-        else:
-            dropout=dropout
-            activation_function='gelu'
-            activation_dropout=0.0
-            attention_dropout=0.0
-            # cor_bart
-            cor_bart_config = BartConfig.from_pretrained(cor_bart_path, dropout=dropout,
-                                                activation_function=activation_function,
-                                                activation_dropout=activation_dropout,
-                                                attention_dropout=attention_dropout)
-            cor_bart = BartForConditionalGenerationwithDropoutSrc.from_pretrained(cor_bart_path, config=cor_bart_config, src_dropout=src_dropout)
-        
-    # align_bart
-    align_bart = None
-    align_bart_reverse = None
-    if kl_loss_weight > 0:
-        if force_bart:
-            align_bart = BartForConditionalGeneration.from_pretrained(align_bart_path)
-            align_bart_reverse = BartForConditionalGeneration.from_pretrained(reverse_align_bart_path)
-        else:
-            align_bart = BartForConditionalGenerationwithDropoutSrc.from_pretrained(align_bart_path, src_dropout=src_dropout)
-            align_bart_reverse = BartForConditionalGenerationwithDropoutSrc.from_pretrained(reverse_align_bart_path, src_dropout=src_dropout)
-    
-    model = AlignmentDistillBART(
-        cor_bart=cor_bart,
-        align_bart=align_bart,
-        align_bart_reverse=align_bart_reverse,
-        kl_loss_weight=kl_loss_weight,
-        alpha=alpha,
-        kl_loss_type=kl_loss_type,
-        distill_way=distill_way
-    )
-    
-    def preprocess_function(batch):
-        model_inputs = tokenizer(batch['source'],
-                                max_length=max_cor_length,
-                                padding=False,
-                                truncation=True,
-                                return_token_type_ids=False)
+        splitter = ds.train_test_split(test_size=args.val_ratio, seed=42)
+        train_ds, val_ds = splitter["train"], splitter["test"]
 
-        labels = tokenizer(batch['target'],
-                        max_length=max_target_length,
-                        padding=False,
-                        truncation=True,
-                        return_token_type_ids=False)
+    sep_tok = tok.eos_token
 
-        model_inputs["labels"] = labels["input_ids"]
-        
-        # align inputs
-        align_inputs = [f"{src}{sep_token}{pred}" for src, pred in zip(batch['source'], batch['pred'])]
-        align_tokenize_outputs = tokenizer(align_inputs,
-                                            max_length=max_align_length,
-                                            padding=False,
-                                            truncation=True,
-                                            return_token_type_ids=False
-                                            )
-        model_inputs['align_input_ids'] = align_tokenize_outputs['input_ids']
-        
-        # align reverse inputs
-        align_reverse_inputs = [f"{pred}{sep_token}{src}" for src, pred in zip(batch['source'], batch['pred'])]
-        align_reverse_tokenize_outputs = tokenizer(align_reverse_inputs,
-                                            max_length=max_align_length,
-                                            padding=False,
-                                            truncation=True,
-                                            return_token_type_ids=False
-                                            )
-        model_inputs['align_reverse_input_ids'] = align_reverse_tokenize_outputs['input_ids']
+    def build_inputs(batch):
+        src = batch["input"]; hyp = batch["pred"]
+        if seg_needed:
+            src = segment_batch(src); hyp = segment_batch(hyp)
+        batch["source"] = src
+        batch["labels_text"] = batch["target"]
+        return batch
 
-        return model_inputs
+    train_ds = train_ds.map(build_inputs, batched=True, batch_size=1024)
+    val_ds   = val_ds.map(build_inputs,   batched=True, batch_size=1024)
 
-    # data
-    data = load_dataset("json", data_files=data_path)
-    datasets = data["train"].train_test_split(
-        test_size=val_set_size, shuffle=True, seed=seed
-    )
-    train_dataset = datasets["train"]
-    eval_dataset = datasets["test"]
-    column_names = datasets["train"].column_names
-    
-    from accelerate import Accelerator
-    accelerator = Accelerator()
-    
-    with accelerator.main_process_first():
-        train_dataset = train_dataset.map(
-            preprocess_function,
-            batched=True,
-            num_proc=os.cpu_count(),
-            remove_columns=column_names,
-            load_from_cache_file=True,
-        )
-    with accelerator.main_process_first():
-        eval_dataset = eval_dataset.map(
-            preprocess_function,
-            batched=True,
-            num_proc=os.cpu_count(),
-            remove_columns=column_names,
-            load_from_cache_file=True,
-        )
-        
-    if local_rank == 0:
-        print('================ dataset examples ================')
-        print('max length: ', max([len(d) for d in train_dataset['input_ids']]))
-        print(tokenizer.batch_decode(train_dataset['input_ids'][:2]))
-        print(tokenizer.batch_decode(train_dataset['labels'][:2]))
-        print(train_dataset[0])
+    # tokenise once for all three models (same tokenizer/vocab)
+    def tok_fn(batch):
+        model_in = tok(batch["source"], truncation=True, max_length=192)
+        with tok.as_target_tokenizer():
+            labels = tok(batch["labels_text"], truncation=True, max_length=192)
+        model_in["labels"] = labels["input_ids"]
+        return model_in
 
-    # eval_steps = 1 / num_train_epochs if not eval_steps else eval_steps
-    # warmup_ratio = 1 / num_train_epochs
-    adam_beta1, adam_beta2 = adam_betas
-    trainer = MyTrainer(
-        model=model,
-        args=Seq2SeqTrainingArguments(
-            per_device_train_batch_size=micro_batch_size,
-            per_device_eval_batch_size=micro_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_ratio=warmup_ratio,
-            # warmup_steps=warmup_steps,
-            num_train_epochs=num_train_epochs,
-            learning_rate=learning_rate,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            # bf16=True if torch.cuda.is_bf16_supported() else False,
-            # fp16=False if torch.cuda.is_bf16_supported() else True,
-            fp16=True,
-            logging_steps=logging_steps,
-            lr_scheduler_type=lr_scheduler_type,
-            optim=optim,
-            eval_strategy="steps",
-            save_strategy="steps",
-            eval_steps=0.05,
-            save_steps=0.05,
-            output_dir=output_dir,
-            save_total_limit=3,
-            ddp_find_unused_parameters=True if ddp else None,
-            group_by_length=group_by_length,
-            report_to=["tensorboard","wandb"] if use_wandb else "tensorboard",
-            label_smoothing_factor=label_smoothing_factor,
-            load_best_model_at_end=True,
-            tf32=use_tf32,
-        ),
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-        data_collator=Seq2SeqDistillDataCollator(pad_token_id=tokenizer.pad_token_id,
-                                     label_pad_token_id=-100,
-                                     max_cor_length=max_cor_length,
-                                     max_align_length=max_align_length,
-                                     max_target_length=max_target_length),
-        callbacks=[transformers.EarlyStoppingCallback(early_stopping_patience=patience)]
+    train_tok = train_ds.map(tok_fn, batched=True,
+                             remove_columns=train_ds.column_names)
+    val_tok   = val_ds.map(tok_fn,   batched=True,
+                           remove_columns=val_ds.column_names)
+
+    train_args = Seq2SeqTrainingArguments(
+        output_dir=args.output_dir,
+        per_device_train_batch_size=args.batch,
+        per_device_eval_batch_size=args.batch,
+        learning_rate=args.lr,
+        num_train_epochs=args.epochs,
+        gradient_accumulation_steps=args.grad_accum,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        fp16=args.fp16,
+        logging_steps=200,
+        report_to=["wandb"],
+        metric_for_best_model="loss",
+        load_best_model_at_end=True
     )
 
-    # Training
+    trainer = DistilTrainer(
+        model=student,
+        teacher_fwd=teacher_fwd,
+        teacher_rev=teacher_rev,
+        alpha=args.alpha, beta=args.beta, tau=args.tau,
+        args=train_args,
+        train_dataset=train_tok,
+        eval_dataset=val_tok,
+        tokenizer=tok,
+    )
+
     trainer.train()
-    trainer.save_model(os.path.join(output_dir, 'best-model'))  # Saves the tokenizer too for easy upload
-    
-if __name__ == '__main__':
-    fire.Fire(main)
+    trainer.save_model(args.output_dir)
+    tok.save_pretrained(args.output_dir)
+    wandb.finish()
+
+if __name__ == "__main__":
+    main()
