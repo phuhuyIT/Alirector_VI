@@ -200,21 +200,37 @@ def main():
             "labels": lab_enc["input_ids"]
         }
 
-    orig_cols = list(train_ds.column_names)          # ['input', 'pred', 'target']
+    ############################################################################
+    #  Build TRAIN set
+    ############################################################################
+    orig_cols = list(train_ds.column_names)
 
     train_ds = train_ds.map(
         preprocess,
         batched=True,
-        load_from_cache_file=False)                  # <-- keeps new cols
+        load_from_cache_file=False,     # <- force fresh processing
+        desc="Preprocess train")
 
-    train_ds = train_ds.remove_columns(orig_cols)    # drop raw text cols
+    # sanity-check: make sure all new keys exist
+    missing = [k for k in (
+        "input_ids_fwd", "attention_mask_fwd",
+        "input_ids_rev", "attention_mask_rev") if k not in train_ds.column_names]
+    if missing:
+        raise ValueError(f"Preprocess did not add keys: {missing}")
 
+    train_ds = train_ds.remove_columns(orig_cols)
 
+    ############################################################################
+    #  Build VALID set
+    ############################################################################
     orig_cols = list(val_ds.column_names)
+
     val_ds = val_ds.map(
         preprocess,
         batched=True,
-        load_from_cache_file=False)
+        load_from_cache_file=False,
+        desc="Preprocess valid")
+
     val_ds = val_ds.remove_columns(orig_cols)
 
     # Optional sanity-check (will raise immediately if something is wrong)
