@@ -45,14 +45,21 @@ class DistilCollator:
         self.pad = tok.pad_token_id
 
     def __call__(self, batch):
+        # student -----------------------------------------------------------
         student_batch = self.tok.pad(
-            {k: [b[k] for b in batch] for k in ("input_ids", "attention_mask")},
+            {"input_ids": [b["input_ids"] for b in batch],
+             "attention_mask": [b["attention_mask"] for b in batch]},
             return_tensors="pt")
+
+        # teachers ----------------------------------------------------------
         fwd_batch = self.tok.pad(
-            {k: [b[k] for b in batch] for k in ("input_ids_fwd", "attention_mask_fwd")},
+            {"input_ids": [b["input_ids_fwd"] for b in batch],
+             "attention_mask": [b["attention_mask_fwd"] for b in batch]},
             return_tensors="pt")
+
         rev_batch = self.tok.pad(
-            {k: [b[k] for b in batch] for k in ("input_ids_rev", "attention_mask_rev")},
+            {"input_ids": [b["input_ids_rev"] for b in batch],
+             "attention_mask": [b["attention_mask_rev"] for b in batch]},
             return_tensors="pt")
         labels = torch.nn.utils.rnn.pad_sequence(
             [torch.tensor(b["labels"]) for b in batch],
