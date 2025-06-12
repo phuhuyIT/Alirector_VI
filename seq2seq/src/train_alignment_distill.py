@@ -202,6 +202,11 @@ def main():
 
     train_ds = train_ds.map(preprocess, batched=True, cache_file_names=None,remove_columns=train_ds.column_names)
     val_ds = val_ds.map(preprocess, batched=True, cache_file_names=None,remove_columns=val_ds.column_names)
+    # Optional sanity-check (will raise immediately if something is wrong)
+    sample = train_ds[0]
+    for k in ("input_ids_fwd", "attention_mask_fwd",
+              "input_ids_rev", "attention_mask_rev"):
+        assert k in sample, f"{k} missing after preprocess()"
 
     collator = DistilCollator(tok)
 
