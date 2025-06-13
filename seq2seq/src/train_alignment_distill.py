@@ -156,7 +156,7 @@ def main():
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=16,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         report_to=["wandb"],
