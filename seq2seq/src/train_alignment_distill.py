@@ -225,7 +225,7 @@ def main():
         save_strategy="epoch",
         save_total_limit=3,
         fp16=args.fp16,
-        logging_steps=500,
+        logging_steps=20,
         report_to=["wandb"],
         load_best_model_at_end=True,
         remove_unused_columns=False,
