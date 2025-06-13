@@ -203,7 +203,7 @@ def main():
         num_train_epochs=args.num_train_epochs,
         learning_rate=args.learning_rate,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=3,
         fp16=args.fp16,
