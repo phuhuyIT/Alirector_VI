@@ -159,7 +159,13 @@ def main():
     prec, rec, f05 = corpus_fbeta(src_texts, sys_texts, gold_texts, beta=0.5)
 
     # sacreBLEU metrics
-    gleu = GLEU().corpus_score(sys_texts, [gold_texts]).score
+    gleu = None
+    if GLEU_AVAILABLE:
+        gleu = GLEU().corpus_score(sys_texts, [gold_texts]).score
+
+    chrf = CHRF(word_order=2).corpus_score(sys_texts, [gold_texts]).score
+    bleu = BLEU().corpus_score(sys_texts, [gold_texts]).score if args.calc_bleu else None
+
     chrf = CHRF(word_order=2).corpus_score(sys_texts, [gold_texts]).score
     bleu = None
     if args.calc_bleu:
@@ -167,16 +173,18 @@ def main():
 
     # log / print
     print(f"F0.5  : {f05*100:6.2f} (P={prec*100:.2f}, R={rec*100:.2f})")
-    print(f"GLEU  : {gleu:6.2f}")
+    if gleu is not None:
+        print(f"GLEU  : {gleu:6.2f}")
     print(f"chrF++: {chrf:6.2f}")
     if bleu is not None:
         print(f"BLEU  : {bleu:6.2f}")
 
-    wandb.log({"F0.5": f05, "Precision": prec,
-               "Recall": rec, "GLEU": gleu/100.0,
-               "chrF++": chrf/100.0,
-               "BLEU": bleu/100.0 if bleu else None})
-
+    wandb.log({
+        "F0.5": f05, "Precision": prec, "Recall": rec,
+        "GLEU": gleu/100.0 if gleu is not None else None,
+        "chrF++": chrf/100.0,
+        "BLEU": bleu/100.0 if bleu is not None else None
+    })
     # optional prediction table
     if args.log_predictions:
         table = wandb.Table(columns=["src", "pred", "gold"])
