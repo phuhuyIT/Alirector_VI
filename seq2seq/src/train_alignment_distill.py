@@ -78,7 +78,7 @@ class DistilTrainer(Seq2SeqTrainer):
             p.requires_grad_(False)
         self.alpha, self.beta, self.tau = alpha, beta, tau
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs["labels"]
         outputs_s = model(**inputs)
         loss_ce = outputs_s.loss                                     # NLL
