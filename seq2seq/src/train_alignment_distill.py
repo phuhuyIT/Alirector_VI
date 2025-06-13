@@ -51,9 +51,9 @@ def build_args():
     # training
     p.add_argument("--per_device_train_batch_size", type=int, default=4)
     p.add_argument("--per_device_eval_batch_size", type=int, default=4)
-    p.add_argument("--num_train_epochs", type=int, default=3)
+    p.add_argument("--num_train_epochs", type=int, default=4)
     p.add_argument("--learning_rate", type=float, default=1e-5)
-    p.add_argument("--gradient_accumulation_steps", type=int, default=64)
+    p.add_argument("--gradient_accumulation_steps", type=int, default=16)
     p.add_argument("--max_source_len", type=int, default=256)
     p.add_argument("--max_target_len", type=int, default=192)
     # KD hyper-params
