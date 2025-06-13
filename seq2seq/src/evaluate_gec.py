@@ -19,15 +19,13 @@ import wandb
 
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-try:                                    # ≥ 2.3.1
+# at the top of evaluate_gec.py
+try:                                    # sacrebleu ≥ 2.3.1
     from sacrebleu.metrics import GLEU, CHRF, BLEU
+    GLEU_AVAILABLE = True
 except ImportError:
-    # older wheels expose only BLEU / CHRF
     from sacrebleu.metrics import CHRF, BLEU
-    try:
-        from sacrebleu.metrics.gleu import GLEU    # some 2.x nightlies
-    except ImportError:
-        GLEU = None                               # gracefully skip 
+    GLEU_AVAILABLE = False              # no GLEU in this wheel
 
 # ───────────── VNCoreNLP (for bartpho-word) ─────────────
 try:
@@ -165,11 +163,6 @@ def main():
 
     chrf = CHRF(word_order=2).corpus_score(sys_texts, [gold_texts]).score
     bleu = BLEU().corpus_score(sys_texts, [gold_texts]).score if args.calc_bleu else None
-
-    chrf = CHRF(word_order=2).corpus_score(sys_texts, [gold_texts]).score
-    bleu = None
-    if args.calc_bleu:
-        bleu = BLEU().corpus_score(sys_texts, [gold_texts]).score
 
     # log / print
     print(f"F0.5  : {f05*100:6.2f} (P={prec*100:.2f}, R={rec*100:.2f})")
