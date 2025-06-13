@@ -194,6 +194,17 @@ def main():
                               remove_columns=train_set.column_names)
     val_set = val_set.map(preprocess, batched=True,
                           remove_columns=val_set.column_names)
+    
+    # ---------- NEW: simple stack collator ------------------------------------
+    def simple_collate(examples):
+        """
+        Each field is already padded to fixed length during preprocess(),
+        so we just convert lists → LongTensor and stack along dim-0.
+        """
+        batch = {}
+        for k in examples[0].keys():
+            batch[k] = torch.tensor([ex[k] for ex in examples], dtype=torch.long)
+        return batch
 
     # ---- training arguments ---------------------------------------------
     targs = Seq2SeqTrainingArguments(
@@ -210,6 +221,7 @@ def main():
         logging_steps=500,
         report_to=["wandb"],
         load_best_model_at_end=True,
+        remove_unused_columns=False,
         metric_for_best_model="loss"
     )
 
@@ -224,7 +236,7 @@ def main():
         train_dataset=train_set,
         eval_dataset=val_set,
         tokenizer=tok,
-        # DataCollator not needed – everything is same length after padding
+        data_collator=simple_collate,
     )
 
     trainer.train()
