@@ -85,9 +85,9 @@ def get_args():
     p.add_argument("--fp16", action="store_true")
     p.add_argument("--word_segment", action="store_true")
     # W&B
-    p.add_argument("--wandb_project", type=str)
-    p.add_argument("--wandb_entity", type=str)
-    p.add_argument("--wandb_api_key", type=str)
+    p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
+    p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
+    p.add_argument("--wandb_api_key", type=str, default=None)
     p.add_argument("--log_predictions", action="store_true",
                    help="Log first 100 preds as W&B table")
     return p.parse_args()
