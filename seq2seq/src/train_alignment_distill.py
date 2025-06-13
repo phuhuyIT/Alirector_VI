@@ -164,7 +164,7 @@ def main():
         predict_with_generate=True,
         generation_num_beams=5,
         save_total_limit=3,
-        logging_steps=500
+        logging_steps=20
     )
 
     trainer = DistilTrainer(
