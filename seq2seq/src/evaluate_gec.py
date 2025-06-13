@@ -19,7 +19,15 @@ import wandb
 
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-from sacrebleu.metrics import GLEU, CHRF, BLEU   # pip install sacrebleu==2.*
+try:                                    # ≥ 2.3.1
+    from sacrebleu.metrics import GLEU, CHRF, BLEU
+except ImportError:
+    # older wheels expose only BLEU / CHRF
+    from sacrebleu.metrics import CHRF, BLEU
+    try:
+        from sacrebleu.metrics.gleu import GLEU    # some 2.x nightlies
+    except ImportError:
+        GLEU = None                               # gracefully skip 
 
 # ───────────── VNCoreNLP (for bartpho-word) ─────────────
 try:
