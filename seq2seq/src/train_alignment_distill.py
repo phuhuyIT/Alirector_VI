@@ -1,152 +1,128 @@
 #!/usr/bin/env python
 """
-Stage-3 Alirector – distil the forward & reverse alignment teachers
-into the correction model with CE + KL loss.
+Stage-3 Bidirectional Alignment Distillation for Alirector (Vietnamese).
 
-Requirements
-------------
-* teachers were trained with train_align.py
-* dataset_dir is the Stage-2 Arrow folder (input, pred, target)
+– student  : Stage-1 correction model (BARTpho-syl | -word)
+– teachers : Stage-2 forward & reverse alignment models
 """
 
 import os, argparse, wandb, torch
-import torch.nn.functional as F
 from functools import lru_cache
 from datasets import load_from_disk, DatasetDict
 from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
                           Seq2SeqTrainingArguments, Seq2SeqTrainer)
+import torch.nn.functional as F
 
-# -------------------------------------------------------------------------
-# VNCoreNLP helpers (only for bartpho-word)
-# -------------------------------------------------------------------------
+# ---------- VNCoreNLP (optional) -------------------------------------------
 try:
     from py_vncorenlp import VnCoreNLP
 except ImportError:
     VnCoreNLP = None
 
+
 @lru_cache(maxsize=1)
 def get_segmenter():
     if VnCoreNLP is None:
-        raise RuntimeError("Install py_vncorenlp & Java ≥8 for word seg.")
+        raise RuntimeError(
+            "py_vncorenlp not installed – pip install py_vncorenlp & Java≥8"
+        )
     return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
 
-def maybe_segment(texts, seg_flag):
-    if not seg_flag:
-        return texts
-    tok_lists = get_segmenter().word_segment(texts)
-    return " ".join(tok_lists)
 
-# -------------------------------------------------------------------------
-# Custom collator – pads three separate encoder inputs
-# -------------------------------------------------------------------------
-class DistilCollator:
-    def __init__(self, tok):
-        self.tok = tok
-        self.pad = tok.pad_token_id
+def segment_batch(texts):
+    seg = get_segmenter()
+    tok_lists = seg.tokenize(texts)
+    return [" ".join(toks) for toks in tok_lists]
 
-    def __call__(self, batch):
-        # student -----------------------------------------------------------
-        student_batch = self.tok.pad(
-            {"input_ids": [b["input_ids"] for b in batch],
-             "attention_mask": [b["attention_mask"] for b in batch]},
-            return_tensors="pt")
 
-        # teachers ----------------------------------------------------------
-        fwd_batch = self.tok.pad(
-            {"input_ids": [b["input_ids_fwd"] for b in batch],
-             "attention_mask": [b["attention_mask_fwd"] for b in batch]},
-            return_tensors="pt")
-
-        rev_batch = self.tok.pad(
-            {"input_ids": [b["input_ids_rev"] for b in batch],
-             "attention_mask": [b["attention_mask_rev"] for b in batch]},
-            return_tensors="pt")
-        labels = torch.nn.utils.rnn.pad_sequence(
-            [torch.tensor(b["labels"]) for b in batch],
-            batch_first=True, padding_value=-100)
-        return {**student_batch, **{
-            "input_ids_fwd": fwd_batch["input_ids"],
-            "attention_mask_fwd": fwd_batch["attention_mask"],
-            "input_ids_rev": rev_batch["input_ids"],
-            "attention_mask_rev": rev_batch["attention_mask"],
-            "labels": labels
-        }}
-
-# -------------------------------------------------------------------------
-# KD-aware Trainer
-# -------------------------------------------------------------------------
-class DistilTrainer(Seq2SeqTrainer):
-    def __init__(self, teacher_fwd, teacher_rev,
-                 alpha, beta, temperature, **kwargs):
-        super().__init__(**kwargs)
-        self.teacher_fwd = teacher_fwd.eval()
-        self.teacher_rev = teacher_rev.eval()
-        for p in list(self.teacher_fwd.parameters())+list(self.teacher_rev.parameters()):
-            p.requires_grad = False
-        self.alpha, self.beta, self.tau = alpha, beta, temperature
-        self.kl = torch.nn.KLDivLoss(reduction="batchmean")
-
-    def compute_loss(self, model, inputs, return_outputs=False):
-        labels = inputs.pop("labels")
-        # student forward
-        stu_out = model(**{k: inputs[k] for k in ("input_ids","attention_mask")})
-        stu_logits = stu_out.logits
-
-        # forward teacher
-        with torch.no_grad():
-            t_fwd = self.teacher_fwd(input_ids=inputs["input_ids_fwd"],
-                                     attention_mask=inputs["attention_mask_fwd"]).logits
-            t_rev = self.teacher_rev(input_ids=inputs["input_ids_rev"],
-                                     attention_mask=inputs["attention_mask_rev"]).logits
-
-        # ----- losses -------------------------------------------------------
-        ce = F.cross_entropy(stu_logits.view(-1, stu_logits.size(-1)),
-                             labels.view(-1), ignore_index=-100)
-
-        tau = self.tau
-        p_fwd = F.softmax(t_fwd / tau, dim=-1)
-        p_rev = F.softmax(t_rev / tau, dim=-1)
-        p_teacher = (self.alpha * p_fwd + self.beta * p_rev) / (self.alpha + self.beta)
-
-        log_p_s = F.log_softmax(stu_logits / tau, dim=-1)
-        kd = self.kl(log_p_s, p_teacher) * (tau ** 2)
-
-        loss = ce + kd
-        return (loss, stu_out) if return_outputs else loss
-
-# -------------------------------------------------------------------------
-# CLI
-# -------------------------------------------------------------------------
-def build_argparser():
+# ---------------- CLI -------------------------------------------------------
+def build_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset_dir", required=True)
-    p.add_argument("--student_path", required=True)
-    p.add_argument("--teacher_fwd_path", required=True)
-    p.add_argument("--teacher_rev_path", required=True)
+    # paths
+    p.add_argument("--dataset_dir", required=True,
+                   help="Folder from predict.py with columns input/pred/target")
+    p.add_argument("--student_path", required=True,
+                   help="Stage-1 correction checkpoint")
+    p.add_argument("--teacher_fwd_path", required=True,
+                   help="Stage-2 forward aligner")
+    p.add_argument("--teacher_rev_path", required=True,
+                   help="Stage-2 reverse aligner")
     p.add_argument("--output_dir", required=True)
+    # training
+    p.add_argument("--per_device_train_batch_size", type=int, default=4)
+    p.add_argument("--per_device_eval_batch_size", type=int, default=4)
+    p.add_argument("--num_train_epochs", type=int, default=3)
+    p.add_argument("--learning_rate", type=float, default=1e-5)
+    p.add_argument("--gradient_accumulation_steps", type=int, default=64)
+    p.add_argument("--max_source_len", type=int, default=256)
+    p.add_argument("--max_target_len", type=int, default=192)
+    # KD hyper-params
     p.add_argument("--alpha", type=float, default=0.9)
     p.add_argument("--beta", type=float, default=0.5)
-    p.add_argument("--temperature", type=float, default=1.0)
-    p.add_argument("--batch", type=int, default=4)
-    p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--lr", type=float, default=1e-5)
-    p.add_argument("--grad_accum", type=int, default=64)
-    # word-seg + val split
-    p.add_argument("--word_segment", action="store_true")
-    p.add_argument("--val_ratio", type=float, default=0.2)
-    # wandb
+    p.add_argument("--temp", type=float, default=1.0)
+    # misc
+    p.add_argument("--val_ratio", type=float, default=0.20)
+    p.add_argument("--fp16", action="store_true")
+    p.add_argument("--word_segment", action="store_true",
+                   help="Force VNCoreNLP segmentation")
+    # W&B
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
     p.add_argument("--wandb_api_key", type=str, default=None)
-    return p
+    return p.parse_args()
 
-# -------------------------------------------------------------------------
-# main
-# -------------------------------------------------------------------------
+
+# ---------------- custom Trainer -------------------------------------------
+class DistilTrainer(Seq2SeqTrainer):
+
+    def __init__(self, teacher_fwd, teacher_rev, tau, alpha, beta, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.t_fwd, self.t_rev = teacher_fwd, teacher_rev
+        self.tau, self.alpha, self.beta = tau, alpha, beta
+        for p in self.t_fwd.parameters():
+            p.requires_grad = False
+        for p in self.t_rev.parameters():
+            p.requires_grad = False
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.pop("labels")
+
+        # -------- unpack inputs --------------------------------------------
+        s_inp = {"input_ids": inputs.pop("stu_ids"),
+                 "attention_mask": inputs.pop("stu_att")}
+        f_inp = {"input_ids": inputs.pop("fwd_ids"),
+                 "attention_mask": inputs.pop("fwd_att")}
+        r_inp = {"input_ids": inputs.pop("rev_ids"),
+                 "attention_mask": inputs.pop("rev_att")}
+
+        # -------- student forward ------------------------------------------
+        out_s = model(**s_inp, labels=labels)
+        loss_ce = out_s.loss
+        logit_s = out_s.logits / self.tau
+        log_probs_s = F.log_softmax(logit_s, dim=-1)
+
+        # -------- teachers --------------------------------------------------
+        with torch.no_grad():
+            logit_f = self.t_fwd(**f_inp, labels=labels).logits / self.tau
+            logit_r = self.t_rev(**r_inp, labels=labels).logits / self.tau
+            prob_f = F.softmax(logit_f, dim=-1)
+            prob_r = F.softmax(logit_r, dim=-1)
+
+        # KL divergence (batch-mean)
+        kl_f = F.kl_div(log_probs_s, prob_f, reduction="batchmean")
+        kl_r = F.kl_div(log_probs_s, prob_r, reduction="batchmean")
+        loss_kd = self.alpha * kl_f + (1.0 - self.alpha) * kl_r
+
+        loss = loss_ce + self.beta * loss_kd
+        return (loss, out_s) if return_outputs else loss
+
+
+# ---------------- main -----------------------------------------------------
 def main():
-    args = build_argparser().parse_args()
+    args = build_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # ---- W&B -------------------------------------------------------------
     if args.wandb_api_key:
         os.environ["WANDB_API_KEY"] = args.wandb_api_key
     wandb.init(project=args.wandb_project,
@@ -154,107 +130,85 @@ def main():
                name=os.path.basename(args.output_dir),
                config=vars(args))
 
+    # ---- detect segmentation --------------------------------------------
     auto_word = "word" in args.student_path.lower()
-    seg_flag = auto_word or args.word_segment
+    seg_needed = auto_word or args.word_segment
 
+    # ---- tokenizer -------------------------------------------------------
     tok = AutoTokenizer.from_pretrained(args.student_path, use_fast=True)
 
-    # ---------- load models -------------------------------------------------
-    student = AutoModelForSeq2SeqLM.from_pretrained(args.student_path, torch_dtype=torch.float16)
-    teacher_fwd = AutoModelForSeq2SeqLM.from_pretrained(args.teacher_fwd_path, torch_dtype=torch.float16)
-    teacher_rev = AutoModelForSeq2SeqLM.from_pretrained(args.teacher_rev_path, torch_dtype=torch.float16)
-
+    # ---- models ----------------------------------------------------------
+    dtype = torch.float16 if args.fp16 else None
+    student = AutoModelForSeq2SeqLM.from_pretrained(args.student_path,
+                                                    torch_dtype=dtype)
+    teacher_fwd = AutoModelForSeq2SeqLM.from_pretrained(args.teacher_fwd_path,
+                                                        torch_dtype=dtype)
+    teacher_rev = AutoModelForSeq2SeqLM.from_pretrained(args.teacher_rev_path,
+                                                        torch_dtype=dtype)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     student.to(device); teacher_fwd.to(device); teacher_rev.to(device)
+    teacher_fwd.eval(); teacher_rev.eval()
 
-    # ---------- load data ---------------------------------------------------
+    # ---- load Stage-2 data ----------------------------------------------
     ds = load_from_disk(args.dataset_dir)
     if isinstance(ds, DatasetDict) and "validation" in ds:
-        train_ds, val_ds = ds["train"], ds["validation"]
+        train_set, val_set = ds["train"], ds["validation"]
     else:
         split = ds.train_test_split(seed=42, test_size=args.val_ratio)
-        train_ds, val_ds = split["train"], split["test"]
+        train_set, val_set = split["train"], split["test"]
 
     sep_tok = tok.eos_token
 
+    # ---- preprocessing ---------------------------------------------------
     def preprocess(batch):
-        X = maybe_segment(batch["input"], seg_flag)
-        Y_hat = maybe_segment(batch["pred"], seg_flag)
-        # student source = X
-        stu_enc = tok(X, truncation=True, max_length=256)
-        # teachers
-        fwd_src = [f"{x} {sep_tok} {y}" for x, y in zip(X, Y_hat)]
-        rev_src = [f"{y} {sep_tok} {x}" for x, y in zip(X, Y_hat)]
-        fwd_enc = tok(fwd_src, truncation=True, max_length=256)
-        rev_enc = tok(rev_src, truncation=True, max_length=256)
+        X, Y_hat, Y = batch["input"], batch["pred"], batch["target"]
+        if seg_needed:
+            X = segment_batch(X)
+            Y_hat = segment_batch(Y_hat)
+        # sources
+        stu_src = X
+        fwd_src = [f"{x} {sep_tok} {yhat}" for x, yhat in zip(X, Y_hat)]
+        rev_src = [f"{yhat} {sep_tok} {x}" for x, yhat in zip(X, Y_hat)]
+
+        tok_stu = tok(stu_src, max_length=args.max_source_len,
+                      truncation=True, padding="max_length")
+        tok_fwd = tok(fwd_src, max_length=args.max_source_len,
+                      truncation=True, padding="max_length")
+        tok_rev = tok(rev_src, max_length=args.max_source_len,
+                      truncation=True, padding="max_length")
         with tok.as_target_tokenizer():
-            lab_enc = tok(maybe_segment(batch["target"], seg_flag),
-                          truncation=True, max_length=192)
+            labels = tok(Y, max_length=args.max_target_len,
+                         truncation=True, padding="max_length").input_ids
+
         return {
-            "input_ids": stu_enc["input_ids"],
-            "attention_mask": stu_enc["attention_mask"],
-            "input_ids_fwd": fwd_enc["input_ids"],
-            "attention_mask_fwd": fwd_enc["attention_mask"],
-            "input_ids_rev": rev_enc["input_ids"],
-            "attention_mask_rev": rev_enc["attention_mask"],
-            "labels": lab_enc["input_ids"]
+            "stu_ids": tok_stu.input_ids,
+            "stu_att": tok_stu.attention_mask,
+            "fwd_ids": tok_fwd.input_ids,
+            "fwd_att": tok_fwd.attention_mask,
+            "rev_ids": tok_rev.input_ids,
+            "rev_att": tok_rev.attention_mask,
+            "labels": labels
         }
 
-    ############################################################################
-    #  Build TRAIN set
-    ############################################################################
-    orig_cols = list(train_ds.column_names)
+    train_set = train_set.map(preprocess, batched=True,
+                              remove_columns=train_set.column_names)
+    val_set = val_set.map(preprocess, batched=True,
+                          remove_columns=val_set.column_names)
 
-    train_ds = train_ds.map(
-        preprocess,
-        batched=True,
-        load_from_cache_file=False,     # <- force fresh processing
-        desc="Preprocess train")
-
-    # sanity-check: make sure all new keys exist
-    missing = [k for k in (
-        "input_ids_fwd", "attention_mask_fwd",
-        "input_ids_rev", "attention_mask_rev") if k not in train_ds.column_names]
-    if missing:
-        raise ValueError(f"Preprocess did not add keys: {missing}")
-
-    train_ds = train_ds.remove_columns(orig_cols)
-
-    ############################################################################
-    #  Build VALID set
-    ############################################################################
-    orig_cols = list(val_ds.column_names)
-
-    val_ds = val_ds.map(
-        preprocess,
-        batched=True,
-        load_from_cache_file=False,
-        desc="Preprocess valid")
-
-    val_ds = val_ds.remove_columns(orig_cols)
-
-    # Optional sanity-check (will raise immediately if something is wrong)
-    sample = train_ds[0]
-    for k in ("input_ids_fwd", "attention_mask_fwd",
-              "input_ids_rev", "attention_mask_rev"):
-        assert k in sample, f"{k} missing after preprocess()"
-
-    collator = DistilCollator(tok)
-
-    # ---------- training args ----------------------------------------------
+    # ---- training arguments ---------------------------------------------
     targs = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
-        per_device_train_batch_size=args.batch,
-        per_device_eval_batch_size=args.batch,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        num_train_epochs=args.epochs,
-        eval_strategy="epoch",
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
+        num_train_epochs=args.num_train_epochs,
+        learning_rate=args.learning_rate,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        evaluation_strategy="epoch",
         save_strategy="epoch",
-        fp16=True,
-        predict_with_generate=False,
-        report_to=["wandb"],
+        save_total_limit=3,
+        fp16=args.fp16,
         logging_steps=500,
+        report_to=["wandb"],
         load_best_model_at_end=True,
         metric_for_best_model="loss"
     )
@@ -262,15 +216,15 @@ def main():
     trainer = DistilTrainer(
         teacher_fwd=teacher_fwd,
         teacher_rev=teacher_rev,
+        tau=args.temp,
         alpha=args.alpha,
         beta=args.beta,
-        temperature=args.temperature,
         model=student,
         args=targs,
-        train_dataset=train_ds,
-        eval_dataset=val_ds,
+        train_dataset=train_set,
+        eval_dataset=val_set,
         tokenizer=tok,
-        data_collator=collator
+        # DataCollator not needed – everything is same length after padding
     )
 
     trainer.train()
