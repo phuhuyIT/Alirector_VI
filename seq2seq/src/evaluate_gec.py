@@ -125,8 +125,8 @@ def main():
     ds = (load_from_disk(args.dataset_dir)[args.split]
           if args.dataset_dir else
           load_dataset(args.dataset_name, split=args.split))
-    src_texts   = ds["input"]
-    gold_texts  = ds["output"] if "output" in ds.column_names else ds["target"]
+    src_texts   = ds["error_text"]
+    gold_texts  = ds["correct_text"] if "correct_text" in ds.column_names else ds["target"]
     src_texts   = maybe_segment(src_texts, seg_need)
     gold_texts  = maybe_segment(gold_texts, seg_need)
 
