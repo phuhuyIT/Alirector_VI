@@ -84,7 +84,14 @@ class DistilTrainer(Seq2SeqTrainer):
         for p in self.t_rev.parameters():
             p.requires_grad = False
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    # accepts the extra kwarg sent by Trainer.training_step
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs=False,
+        num_items_in_batch=None,   # <-- NEW (unused)
+    ):
         labels = inputs.pop("labels")
 
         # -------- unpack inputs --------------------------------------------
