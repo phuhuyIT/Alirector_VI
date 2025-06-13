@@ -125,8 +125,6 @@ def main():
     ds = (load_from_disk(args.dataset_dir)[args.split]
           if args.dataset_dir else
           load_dataset(args.dataset_name, split=args.split))
-    # use 5% of ds
-    ds = ds.train_test_split(test_size=0.05, seed=42)
     src_texts   = ds["error_text"]
     gold_texts  = ds["correct_text"] if "correct_text" in ds.column_names else ds["target"]
     src_texts   = maybe_segment(src_texts, seg_need)
