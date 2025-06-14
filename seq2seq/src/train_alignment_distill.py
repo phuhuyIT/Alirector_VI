@@ -143,11 +143,23 @@ class DistilTrainer(Seq2SeqTrainer):
         st_logits = outputs_s.logits / self.tau
         tf_prob  = F.softmax(tf_logits, dim=-1)
         tr_prob  = F.softmax(tr_logits, dim=-1)
-        mask = (labels != -100).unsqueeze(-1)          # B × T × 1
-        st_logp = F.log_softmax(st_logits, dim=-1)
-        kld_fwd = F.kl_div(st_logp[mask], tf_prob[mask], reduction="batchmean")
-        kld_rev = F.kl_div(st_logp[mask], tr_prob[mask], reduction="batchmean")
+        # ----- KL loss with proper masking -------------------------------
+        mask_token = (labels != -100)            # [B, T]
+        # full matrices
+        kl_fwd_all = F.kl_div(st_logp, tf_prob, reduction="none")   # [B,T,V]
+        kl_rev_all = F.kl_div(st_logp, tr_prob, reduction="none")
+
+        # sum over vocabulary dimension,  keep token dimension
+        kl_fwd_tok = kl_fwd_all.sum(-1)          # [B, T]
+        kl_rev_tok = kl_rev_all.sum(-1)          # [B, T]
+
+        # apply mask and normalise
+        denom = mask_token.sum()                 # number of real tokens
+        kld_fwd = (kl_fwd_tok * mask_token).sum() / denom
+        kld_rev = (kl_rev_tok * mask_token).sum() / denom
+
         loss = loss_ce + self.alpha * kld_fwd + self.beta * kld_rev
+
         return (loss, outputs_s) if return_outputs else loss
 
 # ─────────────────────────────  Main  ────────────────────────────────────
