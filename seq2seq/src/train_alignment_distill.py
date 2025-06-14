@@ -18,42 +18,49 @@ from datasets import load_from_disk
 from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
                           Seq2SeqTrainer, Seq2SeqTrainingArguments,
                           DataCollatorForSeq2Seq)
-from transformers.data.data_collator import _torch_collate_batch
+import torch
+from torch.nn.functional import pad
 from dataclasses import dataclass
 from typing import List, Dict, Any
-
 @dataclass
-class DataCollatorWithTeachers(DataCollatorForSeq2Seq):
-    """
-    Pads the normal Seq2Seq fields PLUS the teacher input_{ids/attention_mask}.
-    """
-    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # first let HF pad the student fields
-        features = super().__call__(batch)
+class DataCollatorWithTeachers:
+    tokenizer: Any
+    model: Any = None                      # keeps Trainer happy
+    pad_to_multiple_of: int | None = None  # optional hf arg
 
-        # now handle teacher side
-        for prefix in ("fwd_", "rev_"):
-            ids_key   = f"{prefix}ids"
-            mask_key  = f"{prefix}mask"
-            if ids_key not in batch[0]:
-                continue   # sanity
-            ids_batch  = [b[ids_key]  for b in batch]
-            mask_batch = [b[mask_key] for b in batch]
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # split teacher vs student keys -----------------------------
+        teacher_keys = ["fwd_ids", "fwd_mask", "rev_ids", "rev_mask"]
+        teacher_batches = {k: [] for k in teacher_keys}
+        student_feats   = []
 
-            # pad to max length of this mini-batch
-            max_len = max(len(x) for x in ids_batch)
-            pad_id  = self.tokenizer.pad_token_id
-            padded_ids  = [_torch_collate_batch(x + [pad_id] * (max_len-len(x)),
-                                                self.tokenizer, pad_token_id=pad_id)
-                           for x in ids_batch]
-            padded_mask = [_torch_collate_batch(x + [0] * (max_len-len(x)),
-                                                self.tokenizer, pad_token_id=0)
-                           for x in mask_batch]
+        for feat in features:
+            for k in teacher_keys:
+                teacher_batches[k].append(torch.tensor(feat.pop(k)))
+            student_feats.append(feat)
 
-            features[ids_key]  = torch.stack(padded_ids)
-            features[mask_key] = torch.stack(padded_mask)
+        # let HF collator pad the *student* part --------------------
+        base = DataCollatorForSeq2Seq(self.tokenizer, model=self.model,
+                                      pad_to_multiple_of=self.pad_to_multiple_of)(
+                                            student_feats)
 
-        return features
+        # pad teacher sequences to same max_len ---------------------
+        for ids_key, mask_key in [("fwd_ids", "fwd_mask"),
+                                  ("rev_ids", "rev_mask")]:
+            ids_list  = teacher_batches[ids_key]
+            mask_list = teacher_batches[mask_key]
+            max_len = max(len(x) for x in ids_list)
+
+            padded_ids  = [pad(x, (0, max_len-len(x)),
+                               value=self.tokenizer.pad_token_id)
+                           for x in ids_list]
+            padded_mask = [pad(x, (0, max_len-len(x)), value=0)
+                           for x in mask_list]
+
+            base[ids_key]  = torch.stack(padded_ids)
+            base[mask_key] = torch.stack(padded_mask)
+
+        return base
 
 # ─────────────────────────  VNCoreNLP helper  ────────────────────────────
 try:
