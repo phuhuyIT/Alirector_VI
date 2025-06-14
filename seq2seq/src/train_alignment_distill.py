@@ -18,6 +18,42 @@ from datasets import load_from_disk
 from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
                           Seq2SeqTrainer, Seq2SeqTrainingArguments,
                           DataCollatorForSeq2Seq)
+from transformers.data.data_collator import _torch_collate_batch
+from dataclasses import dataclass
+from typing import List, Dict, Any
+
+@dataclass
+class DataCollatorWithTeachers(DataCollatorForSeq2Seq):
+    """
+    Pads the normal Seq2Seq fields PLUS the teacher input_{ids/attention_mask}.
+    """
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # first let HF pad the student fields
+        features = super().__call__(batch)
+
+        # now handle teacher side
+        for prefix in ("fwd_", "rev_"):
+            ids_key   = f"{prefix}ids"
+            mask_key  = f"{prefix}mask"
+            if ids_key not in batch[0]:
+                continue   # sanity
+            ids_batch  = [b[ids_key]  for b in batch]
+            mask_batch = [b[mask_key] for b in batch]
+
+            # pad to max length of this mini-batch
+            max_len = max(len(x) for x in ids_batch)
+            pad_id  = self.tokenizer.pad_token_id
+            padded_ids  = [_torch_collate_batch(x + [pad_id] * (max_len-len(x)),
+                                                self.tokenizer, pad_token_id=pad_id)
+                           for x in ids_batch]
+            padded_mask = [_torch_collate_batch(x + [0] * (max_len-len(x)),
+                                                self.tokenizer, pad_token_id=0)
+                           for x in mask_batch]
+
+            features[ids_key]  = torch.stack(padded_ids)
+            features[mask_key] = torch.stack(padded_mask)
+
+        return features
 
 # ─────────────────────────  VNCoreNLP helper  ────────────────────────────
 try:
@@ -172,7 +208,7 @@ def main():
                                 if c not in ("labels", "input_ids",
                                              "attention_mask")])
 
-    collator = DataCollatorForSeq2Seq(tok, model=student)
+    collator = DataCollatorWithTeachers(tokenizer=tok, model=student)
 
     targs = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
