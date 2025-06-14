@@ -221,6 +221,7 @@ def main():
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
+        remove_unused_columns=False,
         report_to=["wandb"],
         fp16=args.fp16,
         predict_with_generate=True,
