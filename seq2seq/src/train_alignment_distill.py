@@ -143,6 +143,7 @@ class DistilTrainer(Seq2SeqTrainer):
         st_logits = outputs_s.logits / self.tau
         tf_prob  = F.softmax(tf_logits, dim=-1)
         tr_prob  = F.softmax(tr_logits, dim=-1)
+        st_logp = F.log_softmax(st_logits, dim=-1)
         # ----- KL loss with proper masking -------------------------------
         mask_token = (labels != -100)            # [B, T]
         # full matrices
