@@ -84,14 +84,21 @@ class DistilTrainer(Seq2SeqTrainer):
         loss_ce = outputs_s.loss                                     # NLL
         # ----- teacher logits (no grad) -----------------------------
         with torch.no_grad():
-            tf_logits = self.teacher_fwd(**inputs).logits / self.tau
-            tr_logits = self.teacher_rev(**inputs).logits / self.tau
+            tf_logits = self.teacher_fwd(
+                input_ids=inputs["fwd_ids"],
+                attention_mask=inputs["fwd_mask"],
+                labels=labels).logits / self.tau
+            tr_logits = self.teacher_rev(
+                input_ids=inputs["rev_ids"],
+                attention_mask=inputs["rev_mask"],
+                labels=labels).logits / self.tau
         st_logits = outputs_s.logits / self.tau
-        st_logp  = F.log_softmax(st_logits,  dim=-1)
         tf_prob  = F.softmax(tf_logits, dim=-1)
         tr_prob  = F.softmax(tr_logits, dim=-1)
-        kld_fwd = F.kl_div(st_logp, tf_prob, reduction="batchmean")   # :contentReference[oaicite:3]{index=3}
-        kld_rev = F.kl_div(st_logp, tr_prob, reduction="batchmean")
+        mask = (labels != -100).unsqueeze(-1)          # B × T × 1
+        st_logp = F.log_softmax(st_logits, dim=-1)
+        kld_fwd = F.kl_div(st_logp[mask], tf_prob[mask], reduction="batchmean")
+        kld_rev = F.kl_div(st_logp[mask], tr_prob[mask], reduction="batchmean")
         loss = loss_ce + self.alpha * kld_fwd + self.beta * kld_rev
         return (loss, outputs_s) if return_outputs else loss
 
@@ -128,20 +135,38 @@ def main():
     ds = load_from_disk(args.dataset_dir)
     if "validation" not in ds:
         ds = ds.train_test_split(test_size=0.20, seed=42)             # 80/20
+    sep_tok = tok.eos_token
     def build_src(batch):
-        src = maybe_segment(batch["input"], seg_needed)
-        hyp = batch["pred"]                                           # already gen-seg
-        batch["source"] = src
-        batch["labels_text"] = batch["target"]
+        x   = maybe_segment(batch["input"], seg_needed)
+        y0  = maybe_segment(batch["pred"], seg_needed)
+        fwd = [f"{a} {sep_tok} {b}" for a, b in zip(x, y0)]
+        rev = [f"{b} {sep_tok} {a}" for a, b in zip(x, y0)]
+        batch.update({"src_student": x,
+                      "src_fwd": fwd,
+                      "src_rev": rev,
+                      "labels_text": batch["target"]})
         return batch
     ds = ds.map(build_src, batched=True, batch_size=1024)
 
     def encode(b):
-        enc = tok(b["source"], truncation=True, max_length=256)
+        stu = tok(b["src_student"], truncation=True, max_length=256)
+        fwd = tok(b["src_fwd"],     truncation=True, max_length=256)
+        rev = tok(b["src_rev"],     truncation=True, max_length=256)
         with tok.as_target_tokenizer():
             lbl = tok(b["labels_text"], truncation=True, max_length=192)
-        enc["labels"] = lbl["input_ids"]
-        return enc
+        out = {
+            # student
+            "input_ids":        stu["input_ids"],
+            "attention_mask":   stu["attention_mask"],
+            # teachers
+            "fwd_ids":          fwd["input_ids"],
+            "fwd_mask":         fwd["attention_mask"],
+            "rev_ids":          rev["input_ids"],
+            "rev_mask":         rev["attention_mask"],
+            # gold
+            "labels":           lbl["input_ids"]
+        }
+        return out
     ds = ds.map(encode, batched=True,
                 remove_columns=[c for c in ds["train"].column_names
                                 if c not in ("labels", "input_ids",
