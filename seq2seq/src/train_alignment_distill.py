@@ -123,7 +123,12 @@ class DistilTrainer(Seq2SeqTrainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs["labels"]
-        outputs_s = model(**inputs)
+        student_args = {
+            k: inputs[k]
+            for k in ("input_ids", "attention_mask", "labels")
+            if k in inputs
+        }
+        outputs_s = model(**student_args)      
         loss_ce = outputs_s.loss                                     # NLL
         # ----- teacher logits (no grad) -----------------------------
         with torch.no_grad():
