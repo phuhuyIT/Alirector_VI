@@ -203,10 +203,11 @@ def main():
             "labels":           lbl["input_ids"]
         }
         return out
+    keep = {"input_ids", "attention_mask", "labels",
+            "fwd_ids", "fwd_mask", "rev_ids", "rev_mask"}
     ds = ds.map(encode, batched=True,
                 remove_columns=[c for c in ds["train"].column_names
-                                if c not in ("labels", "input_ids",
-                                             "attention_mask")])
+                                if c not in keep])
 
     collator = DataCollatorWithTeachers(tokenizer=tok, model=student)
 
