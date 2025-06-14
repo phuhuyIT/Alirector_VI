@@ -19,7 +19,7 @@ import wandb
 
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-# at the top of evaluate_gec.py
+
 try:                                    # sacrebleu ≥ 2.3.1
     from sacrebleu.metrics import GLEU, CHRF, BLEU
     GLEU_AVAILABLE = True
