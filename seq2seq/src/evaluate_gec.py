@@ -96,6 +96,7 @@ def get_args():
     p.add_argument("--wandb_api_key", type=str, default=None)
     p.add_argument("--log_predictions", action="store_true",
                    help="Log first 100 preds as W&B table")
+    p.add_argument("--subset_ratio", type=float, default=0.05)
     return p.parse_args()
 
 # ───────────── Main ─────────────
@@ -124,7 +125,7 @@ def main():
           if args.dataset_dir else
           load_dataset(args.dataset_name, split=args.split))
     # use 5% of ds
-    ds = ds.train_test_split(test_size=0.05, seed=42)["test"]
+    ds = ds.train_test_split(test_size=args.subset_ratio, seed=42)["test"]
     src_texts   = ds["error_text"]
     gold_texts  = ds["correct_text"] if "correct_text" in ds.column_names else ds["target"]
     src_texts   = maybe_segment(src_texts, seg_need)
