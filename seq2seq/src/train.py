@@ -95,7 +95,7 @@ def main():
 
     # ---- Tokenisation -----------------------------------------------------
     def preprocess(examples):
-        inputs = examples["input"]
+        inputs = examples["incorrect_text"]
         if do_segment:
             inputs = segment_batch(inputs)
 
@@ -107,7 +107,7 @@ def main():
 
         with tok.as_target_tokenizer():
             labels = tok(
-                examples["output"],
+                examples["correct_text"],
                 max_length=args.max_target_len,
                 truncation=True
             )
@@ -115,7 +115,7 @@ def main():
         return model_inputs
 
     tokenised = dataset.map(preprocess, batched=True,
-                            remove_columns=["input", "output"])
+                            remove_columns=["incorrect_text", "correct_text"])
 
     # ---- Data collator ----------------------------------------------------
     collator = DataCollatorForSeq2Seq(tok, model=model)
