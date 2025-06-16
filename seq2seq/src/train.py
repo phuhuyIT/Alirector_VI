@@ -90,11 +90,8 @@ def main():
 
     # ---- Load HF dataset --------------------------------------------------
     ds = load_dataset(args.dataset_name)
-    # create 10k dev split
-    dev_size = 100000
-    ds = ds["train"].train_test_split(test_size=dev_size, seed=42)
-    dataset = DatasetDict(train=ds["train"], validation=ds["test"],
-                          test=load_dataset(args.dataset_name)["test"])
+    dataset = DatasetDict(train=ds["train"], validation=ds["validation"],
+                          test=ds["test"])
 
     # ---- Tokenisation -----------------------------------------------------
     def preprocess(examples):
