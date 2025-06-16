@@ -136,7 +136,7 @@ def main():
         fp16=not args.isbf16,                        # bf16=True if A100
         bf16=args.isbf16,
         report_to=["wandb"],
-        logging_steps=500,
+        logging_steps=20,
         dataloader_num_workers=2,
         load_best_model_at_end=True,
         metric_for_best_model="loss"
