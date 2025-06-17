@@ -105,7 +105,7 @@ def main():
         # Test if VnCoreNLP actually works before proceeding
         try:
             test_seg = get_segmenter(args.word_segment_save_dir)
-            test_result = test_seg.word_segment(["Test"])
+            test_result = test_seg.word_segment("Test")
             if not test_result:
                 raise RuntimeError("VnCoreNLP test failed")
             print("VnCoreNLP word segmentation is working correctly.")
