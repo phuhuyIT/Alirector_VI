@@ -53,7 +53,7 @@ def build_argparser() -> argparse.ArgumentParser:
 
 # ------------- DEFINE helper ---------------------------------------------------
 
-@lru_cache(maxsize=1)
+#@lru_cache(maxsize=1)
 def get_segmenter(word_segment_save_dir: str):
     """Lazy-load VNCoreNLP only once (fork-safe)."""
     return VnCoreNLP(save_dir=word_segment_save_dir,
