@@ -34,15 +34,15 @@ except ImportError:
 # Word-segmentation helpers (only needed for bartpho-word checkpoints)
 # --------------------------------------------------------------------------
 @lru_cache(maxsize=1)
-def get_segmenter():
+def get_segmenter(args):
     if VnCoreNLP is None:
         raise RuntimeError("py_vncorenlp not installed — "
                            "pip install py_vncorenlp && ensure Java ≥8")
     return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
 
 
-def segment_sentences(batch):
-    seg = get_segmenter()
+def segment_sentences(batch, args):
+    seg = get_segmenter(args)
     tok_lists = seg.word_segment(batch["input"])
     batch["input"] = [" ".join(tok_lists)]
     return batch
@@ -115,7 +115,7 @@ def main():
 
     # Optional segmentation
     if do_segment:
-        dataset = dataset.map(segment_sentences,
+        dataset = dataset.map(segment_sentences(args),
                               batched=True, batch_size=1024,
                               num_proc=1)
 

@@ -54,16 +54,16 @@ def build_argparser() -> argparse.ArgumentParser:
 # ------------- DEFINE helper ---------------------------------------------------
 
 @lru_cache(maxsize=1)
-def get_segmenter():
+def get_segmenter(args):
     """Lazy-load VNCoreNLP only once (fork-safe)."""
     return VnCoreNLP(save_dir= args.word_segment_save_dir,
                 annotators=["wseg"])
 
 
-def segment_batch(texts):
+def segment_batch(texts, args):
     """Segment a list of raw sentences -> list of 'word1_word2' strings."""
     
-    seg = get_segmenter()
+    seg = get_segmenter(args)
     # seg.tokenize expects List[str] and returns List[List[str]]
     out = seg.word_segment(texts)
     return " ".join(out)
@@ -98,7 +98,7 @@ def main():
     def preprocess(examples):
         inputs = examples["incorrect_text"]
         if do_segment:
-            inputs = segment_batch(inputs)
+            inputs = segment_batch(inputs, args)
 
         model_inputs = tok(
             inputs,

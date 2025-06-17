@@ -27,7 +27,7 @@ except ImportError:
 # helpers for VNCoreNLP
 # ---------------------------------------------------------------------------
 @lru_cache(maxsize=1)
-def get_segmenter():
+def get_segmenter(args):
     if VnCoreNLP is None:
         raise RuntimeError("py_vncorenlp not installed – "
                            "pip install py_vncorenlp and ensure Java ≥8")
@@ -36,15 +36,15 @@ def get_segmenter():
 
 def wseg_sentence(sent: str) -> str:
     """Return sentence with multi-syllable words joined by underscores."""
-    seg = get_segmenter()
-    return " ".join(seg.tokenize(sent)[0])
+    seg = get_segmenter(args)
+    return " ".join(seg.word_segment(sent)[0])
 
 
-def maybe_segment(texts, seg_needed):
+def maybe_segment(texts, seg_needed, args):
     """Segment a list[str] if seg_needed else return original list."""
     if not seg_needed:
         return texts
-    seg = get_segmenter()
+    seg = get_segmenter(args)
     outs = seg.word_segment(texts)
     return " ".join(outs)
 
@@ -134,7 +134,7 @@ def main():
         src = batch["input"]
         hyp = batch["pred"]
         if seg_needed:
-            src = maybe_segment(src, True)   # only segment X
+            src = maybe_segment(src, True, args)   # only segment X
         merged = []
         for s, h in zip(src, hyp):
             if order_src_first:

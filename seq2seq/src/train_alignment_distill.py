@@ -69,16 +69,16 @@ except ImportError:
     VnCoreNLP = None
 
 @lru_cache(maxsize=1)
-def get_segmenter():
+def get_segmenter(args):
     if VnCoreNLP is None:
         raise RuntimeError("Install py_vncorenlp for word segmentation")
     return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
 
-def maybe_segment(texts, needed: bool):
+def maybe_segment(texts, needed: bool, args):
     if not needed:
         return texts
-    seg = get_segmenter()
-    return [" ".join(ws) for ws in seg.tokenize(texts)]
+    seg = get_segmenter(args)
+    return [" ".join(ws) for ws in seg.word_segment(texts)]
 
 # ────────────────────────────  Args  ─────────────────────────────────────
 def build_parser():
@@ -199,8 +199,8 @@ def main():
         ds = ds.train_test_split(test_size=0.20, seed=42)             # 80/20
     sep_tok = tok.eos_token
     def build_src(batch):
-        x   = maybe_segment(batch["input"], seg_needed)
-        y0  = maybe_segment(batch["pred"], seg_needed)
+        x   = maybe_segment(batch["input"], seg_needed, args)
+        y0  = maybe_segment(batch["pred"], seg_needed, args)
         fwd = [f"{a} {sep_tok} {b}" for a, b in zip(x, y0)]
         rev = [f"{b} {sep_tok} {a}" for a, b in zip(x, y0)]
         batch.update({"src_student": x,
