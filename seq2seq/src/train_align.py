@@ -27,16 +27,16 @@ except ImportError:
 # helpers for VNCoreNLP
 # ---------------------------------------------------------------------------
 @lru_cache(maxsize=1)
-def get_segmenter(args):
+def get_segmenter(word_segment_save_dir: str):
     if VnCoreNLP is None:
         raise RuntimeError("py_vncorenlp not installed – "
                            "pip install py_vncorenlp and ensure Java ≥8")
-    return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
+    return VnCoreNLP(save_dir=word_segment_save_dir, annotators=["wseg"])
 
 
-def wseg_sentence(sent: str) -> str:
+def wseg_sentence(sent: str, word_segment_save_dir: str) -> str:
     """Return sentence with multi-syllable words joined by underscores."""
-    seg = get_segmenter(args)
+    seg = get_segmenter(word_segment_save_dir)
     return " ".join(seg.word_segment(sent)[0])
 
 
@@ -44,7 +44,7 @@ def maybe_segment(texts, seg_needed, args):
     """Segment a list[str] if seg_needed else return original list."""
     if not seg_needed:
         return texts
-    seg = get_segmenter(args)
+    seg = get_segmenter(args.word_segment_save_dir)
     outs = seg.word_segment(texts)
     return " ".join(outs)
 

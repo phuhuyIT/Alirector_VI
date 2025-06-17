@@ -111,15 +111,15 @@ def get_optimal_batch_size(tokenizer, model, device, base_batch_size=16, max_len
 # Word-segmentation helpers (only needed for bartpho-word checkpoints)
 # --------------------------------------------------------------------------
 @lru_cache(maxsize=1)
-def get_segmenter(args):
+def get_segmenter(word_segment_save_dir: str):
     if VnCoreNLP is None:
         raise RuntimeError("py_vncorenlp not installed — "
                            "pip install py_vncorenlp && ensure Java ≥8")
-    return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
+    return VnCoreNLP(save_dir=word_segment_save_dir, annotators=["wseg"])
 
 
 def segment_sentences(batch, args):
-    seg = get_segmenter(args)
+    seg = get_segmenter(args.word_segment_save_dir)
     tok_lists = seg.word_segment(batch["input"])
     batch["input"] = [" ".join(tok_lists)]
     return batch

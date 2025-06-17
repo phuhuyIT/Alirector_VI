@@ -69,15 +69,15 @@ except ImportError:
     VnCoreNLP = None
 
 @lru_cache(maxsize=1)
-def get_segmenter(args):
+def get_segmenter(word_segment_save_dir: str):
     if VnCoreNLP is None:
         raise RuntimeError("Install py_vncorenlp for word segmentation")
-    return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
+    return VnCoreNLP(save_dir=word_segment_save_dir, annotators=["wseg"])
 
 def maybe_segment(texts, needed: bool, args):
     if not needed:
         return texts
-    seg = get_segmenter(args)
+    seg = get_segmenter(args.word_segment_save_dir)
     return [" ".join(ws) for ws in seg.word_segment(texts)]
 
 # ────────────────────────────  Args  ─────────────────────────────────────
