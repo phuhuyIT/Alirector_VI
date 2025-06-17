@@ -123,7 +123,7 @@ def main():
     t0 = time.time()
     def generate_batch(batch):
         with torch.no_grad():
-            inputs = tokenizer(batch["input"],
+            inputs = tokenizer(batch["incorrect_text"],
                                padding=True,
                                truncation=True,
                                max_length=args.max_len,
@@ -140,7 +140,7 @@ def main():
             batch["pred"] = preds
             if use_wandb:
                 nonlocal seen
-                seen += len(batch["input"])
+                seen += len(batch["incorrect_text"])
                 elapsed = time.time() - t0
                 wandb.log({
                     "sentences_processed": seen,
@@ -153,10 +153,10 @@ def main():
                           batched=True,
                           batch_size=args.batch_size,
                           remove_columns=[c for c in dataset.column_names
-                                          if c not in ("input", "output")])
+                                          if c not in ("incorrect_text", "correct_text")])
 
     # Rename gold column -> target for clarity
-    dataset = dataset.rename_column("output", "target")
+    dataset = dataset.rename_column("correct_text", "target")
 
     # Save to disk for Stage-2 training
     dataset.save_to_disk(args.output_dir)
