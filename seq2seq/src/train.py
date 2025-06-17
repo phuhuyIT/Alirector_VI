@@ -64,9 +64,10 @@ def segment_batch(texts, args):
     """Segment a list of raw sentences -> list of 'word1_word2' strings."""
     
     seg = get_segmenter(args.word_segment_save_dir)
-    # seg.tokenize expects List[str] and returns List[List[str]]
-    out = seg.word_segment(texts)
-    return " ".join(out)
+    # seg.word_segment expects List[str] and returns List[List[str]]
+    segmented_lists = seg.word_segment(texts)
+    # Convert each list of words back to space-separated string
+    return [" ".join(words) for words in segmented_lists]
 
 def main():
     args = build_argparser().parse_args()

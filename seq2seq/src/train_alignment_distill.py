@@ -78,6 +78,7 @@ def maybe_segment(texts, needed: bool, args):
     if not needed:
         return texts
     seg = get_segmenter(args.word_segment_save_dir)
+    # seg.word_segment expects List[str] and returns List[List[str]]
     return [" ".join(ws) for ws in seg.word_segment(texts)]
 
 # ────────────────────────────  Args  ─────────────────────────────────────

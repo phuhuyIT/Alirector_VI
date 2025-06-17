@@ -120,8 +120,10 @@ def get_segmenter(word_segment_save_dir: str):
 
 def segment_sentences(batch, args):
     seg = get_segmenter(args.word_segment_save_dir)
-    tok_lists = seg.word_segment(batch["input"])
-    batch["input"] = [" ".join(tok_lists)]
+    # seg.word_segment expects List[str] and returns List[List[str]]
+    segmented_lists = seg.word_segment(batch["input"])
+    # Convert each list of words back to space-separated strings
+    batch["input"] = [" ".join(words) for words in segmented_lists]
     return batch
 
 
