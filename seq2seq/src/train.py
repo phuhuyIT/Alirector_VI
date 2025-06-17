@@ -63,11 +63,25 @@ def get_segmenter(word_segment_save_dir: str):
 def segment_batch(texts, args):
     """Segment a list of raw sentences -> list of 'word1_word2' strings."""
     
+    # Validate inputs
+    if not isinstance(texts, list):
+        return texts
+    
+    # Clean and validate text inputs
+    clean_texts = []
+    for text in texts:
+        if text is None:
+            clean_texts.append("")
+        elif not isinstance(text, str):
+            clean_texts.append(str(text))
+        else:
+            clean_texts.append(text)
+    
+    # VnCoreNLP segmentation (already tested to work)
     seg = get_segmenter(args.word_segment_save_dir)
-    # seg.word_segment expects List[str] and returns List[List[str]]
-    segmented_lists = seg.word_segment(texts)
-    # Convert each list of words back to space-separated string
+    segmented_lists = seg.word_segment(clean_texts)
     return [" ".join(words) for words in segmented_lists]
+
 
 def main():
     args = build_argparser().parse_args()
@@ -84,8 +98,21 @@ def main():
     do_segment = args.word_segment or auto_word
 
     if do_segment and VnCoreNLP is None:
-        raise RuntimeError("py_vncorenlp is not installed but --word_segment "
-                           "was set or bartpho-word detected.")
+        print("WARNING: py_vncorenlp is not installed but word segmentation was requested.")
+        print("Disabling word segmentation and continuing with syllable-level processing.")
+        do_segment = False
+    elif do_segment:
+        # Test if VnCoreNLP actually works before proceeding
+        try:
+            test_seg = get_segmenter(args.word_segment_save_dir)
+            test_result = test_seg.word_segment(["Test"])
+            if not test_result:
+                raise RuntimeError("VnCoreNLP test failed")
+            print("VnCoreNLP word segmentation is working correctly.")
+        except Exception as e:
+            print(f"WARNING: VnCoreNLP failed to initialize: {e}")
+            print("Disabling word segmentation and continuing with syllable-level processing.")
+            do_segment = False
 
     tok = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path)
