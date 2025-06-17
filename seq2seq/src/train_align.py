@@ -31,7 +31,7 @@ def get_segmenter():
     if VnCoreNLP is None:
         raise RuntimeError("py_vncorenlp not installed – "
                            "pip install py_vncorenlp and ensure Java ≥8")
-    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
+    return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
 
 
 def wseg_sentence(sent: str) -> str:
@@ -77,6 +77,7 @@ def build_argparser():
     # word-seg flag
     p.add_argument("--word_segment", action="store_true",
                    help="Force VNCoreNLP segmentation")
+    p.add_argument("--word_segment_save_dir", type=str, default="")
     # W&B
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")

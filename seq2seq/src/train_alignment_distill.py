@@ -72,7 +72,7 @@ except ImportError:
 def get_segmenter():
     if VnCoreNLP is None:
         raise RuntimeError("Install py_vncorenlp for word segmentation")
-    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
+    return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
 
 def maybe_segment(texts, needed: bool):
     if not needed:
@@ -102,6 +102,7 @@ def build_parser():
     p.add_argument("--fp16", action="store_true")
     # word-seg
     p.add_argument("--word_segment", action="store_true")
+    p.add_argument("--word_segment_save_dir", type=str, default="")
     # wandb
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_syllable_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")

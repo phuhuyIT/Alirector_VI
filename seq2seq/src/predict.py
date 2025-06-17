@@ -38,7 +38,7 @@ def get_segmenter():
     if VnCoreNLP is None:
         raise RuntimeError("py_vncorenlp not installed — "
                            "pip install py_vncorenlp && ensure Java ≥8")
-    return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
+    return VnCoreNLP(save_dir=args.word_segment_save_dir, annotators=["wseg"])
 
 
 def segment_sentences(batch):
@@ -73,6 +73,7 @@ def build_argparser():
                    help="Force VNCoreNLP segmentation regardless of checkpoint")
     p.add_argument("--fp16", type=bool, default=False,
                    help="Generate in FP16 (recommended on L4/A100)")
+    p.add_argument("--word_segment_save_dir", type=str, default="")
     return p
 
 

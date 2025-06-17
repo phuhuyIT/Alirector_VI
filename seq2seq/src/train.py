@@ -48,6 +48,7 @@ def build_argparser() -> argparse.ArgumentParser:
                         "(required for bartpho-word checkpoints)")
     p.add_argument("--isbf16", type=bool, default=False,
                    help="Use bf16 instead of fp16")
+    p.add_argument("--word_segment_save_dir", type=str, default="")
     return p
 
 # ------------- DEFINE helper ---------------------------------------------------
@@ -55,7 +56,7 @@ def build_argparser() -> argparse.ArgumentParser:
 @lru_cache(maxsize=1)
 def get_segmenter():
     """Lazy-load VNCoreNLP only once (fork-safe)."""
-    return VnCoreNLP(save_dir= "/content/vncorenlp",
+    return VnCoreNLP(save_dir= args.word_segment_save_dir,
                 annotators=["wseg"])
 
 
