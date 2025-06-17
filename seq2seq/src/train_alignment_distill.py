@@ -78,8 +78,13 @@ def maybe_segment(texts, needed: bool, args):
     if not needed:
         return texts
     seg = get_segmenter(args.word_segment_save_dir)
-    # seg.word_segment expects List[str] and returns List[List[str]]
-    return [" ".join(ws) for ws in seg.word_segment(texts)]
+    # word_segment expects a single string, returns List[List[str]]
+    # Process each text individually
+    segmented_results = []
+    for text in texts:
+        segmented_words = seg.word_segment(text)[0]  # Take first (and only) result
+        segmented_results.append(" ".join(segmented_words))
+    return segmented_results
 
 # ────────────────────────────  Args  ─────────────────────────────────────
 def build_parser():

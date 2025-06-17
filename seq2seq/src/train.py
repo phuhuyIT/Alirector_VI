@@ -53,9 +53,10 @@ def build_argparser() -> argparse.ArgumentParser:
 
 # ------------- DEFINE helper ---------------------------------------------------
 
-#@lru_cache(maxsize=1)
+@lru_cache(maxsize=1)
 def get_segmenter(word_segment_save_dir: str):
     """Lazy-load VNCoreNLP only once (fork-safe)."""
+    
     return VnCoreNLP(save_dir=word_segment_save_dir,
                 annotators=["wseg"])
 
@@ -77,10 +78,16 @@ def segment_batch(texts, args):
         else:
             clean_texts.append(text)
     
-    # VnCoreNLP segmentation (already tested to work)
+    # VnCoreNLP segmentation - process each text individually
     seg = get_segmenter(args.word_segment_save_dir)
-    segmented_lists = seg.word_segment(clean_texts)
-    return [" ".join(words) for words in segmented_lists]
+    segmented_results = []
+    for text in clean_texts:
+        # word_segment expects a single string, returns List[List[str]]
+        # We take the first (and only) result [0]
+        segmented_words = seg.word_segment(text)[0]
+        segmented_results.append(" ".join(segmented_words))
+    
+    return segmented_results
 
 
 def main():
@@ -106,8 +113,8 @@ def main():
         try:
             test_seg = get_segmenter(args.word_segment_save_dir)
             test_result = test_seg.word_segment("Test")
-            if not test_result:
-                raise RuntimeError("VnCoreNLP test failed")
+            if not test_result or len(test_result) == 0 or len(test_result[0]) == 0:
+                raise RuntimeError("VnCoreNLP test failed - no output")
             print("VnCoreNLP word segmentation is working correctly.")
         except Exception as e:
             print(f"WARNING: VnCoreNLP failed to initialize: {e}")

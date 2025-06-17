@@ -45,10 +45,13 @@ def maybe_segment(texts, seg_needed, args):
     if not seg_needed:
         return texts
     seg = get_segmenter(args.word_segment_save_dir)
-    # seg.word_segment expects List[str] and returns List[List[str]]
-    segmented_lists = seg.word_segment(texts)
-    # Convert each list of words back to space-separated strings
-    return [" ".join(words) for words in segmented_lists]
+    # word_segment expects a single string, returns List[List[str]]
+    # Process each text individually
+    segmented_results = []
+    for text in texts:
+        segmented_words = seg.word_segment(text)[0]  # Take first (and only) result
+        segmented_results.append(" ".join(segmented_words))
+    return segmented_results
 
 
 # ---------------------------------------------------------------------------
