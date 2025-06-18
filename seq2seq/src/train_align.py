@@ -136,7 +136,7 @@ def main():
     order_src_first = args.direction == "forward"
 
     def concat_examples(batch):
-        src = batch["input"]
+        src = batch["incorrect_text"]
         hyp = batch["pred"]
         if seg_needed:
             src = maybe_segment(src, True, args)   # only segment X
