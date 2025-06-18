@@ -83,7 +83,7 @@ def maybe_segment(texts, needed: bool, args):
     segmented_results = []
     for text in texts:
         segmented_words = seg.word_segment(text)[0]  # Take first (and only) result
-        segmented_results.append(" ".join(segmented_words))
+        segmented_results.append("".join(segmented_words))
     return segmented_results
 
 # ────────────────────────────  Args  ─────────────────────────────────────

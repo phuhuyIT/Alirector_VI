@@ -125,7 +125,7 @@ def segment_sentences(batch, args):
     segmented_inputs = []
     for text in batch["input"]:
         segmented_words = seg.word_segment(text)[0]  # Take first (and only) result
-        segmented_inputs.append(" ".join(segmented_words))
+        segmented_inputs.append("".join(segmented_words))
     
     batch["input"] = segmented_inputs
     return batch

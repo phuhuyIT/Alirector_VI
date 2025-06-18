@@ -85,7 +85,7 @@ def segment_batch(texts, args):
         # word_segment expects a single string, returns List[List[str]]
         # We take the first (and only) result [0]
         segmented_words = seg.word_segment(text)[0]
-        segmented_results.append(" ".join(segmented_words))
+        segmented_results.append("".join(segmented_words))
     
     return segmented_results
 
