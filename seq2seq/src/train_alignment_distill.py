@@ -205,7 +205,7 @@ def main():
         ds = ds.train_test_split(test_size=0.20, seed=42)             # 80/20
     sep_tok = tok.eos_token
     def build_src(batch):
-        x   = maybe_segment(batch["input"], seg_needed, args)
+        x   = maybe_segment(batch["incorrect_text"], seg_needed, args)
         y0  = maybe_segment(batch["pred"], seg_needed, args)
         fwd = [f"{a} {sep_tok} {b}" for a, b in zip(x, y0)]
         rev = [f"{b} {sep_tok} {a}" for a, b in zip(x, y0)]
