@@ -20,12 +20,25 @@ import wandb
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
-try:                                    # sacrebleu ≥ 2.3.1
-    from sacrebleu.metrics import GLEU, CHRF, BLEU
-    GLEU_AVAILABLE = True
-except ImportError:
+# Fix sacrebleu imports with better error handling
+try:
+    import sacrebleu
     from sacrebleu.metrics import CHRF, BLEU
-    GLEU_AVAILABLE = False              # no GLEU in this wheel
+    SACREBLEU_AVAILABLE = True
+    print("sacrebleu available - BLEU and chrF++ metrics enabled")
+except ImportError:
+    print("ERROR: sacrebleu not installed. Install with: pip install sacrebleu")
+    SACREBLEU_AVAILABLE = False
+
+# GLEU is available in the evaluate library from Hugging Face
+try:
+    import evaluate
+    GLEU_AVAILABLE = True
+    print("evaluate library available - GLEU metric enabled")
+except ImportError:
+    print("WARNING: evaluate library not installed. Install with: pip install evaluate")
+    print("GLEU metric will not be available")
+    GLEU_AVAILABLE = False
 
 # ───────────── VNCoreNLP (for bartpho-word) ─────────────
 try:
@@ -40,10 +53,30 @@ def get_segmenter():
     return VnCoreNLP(save_dir="vncorenlp", annotators=["wseg"])
 
 def maybe_segment(sentences, needed):
+    """Segment sentences if needed, with proper error handling."""
     if not needed:
         return sentences
-    seg = get_segmenter()
-    return [" ".join(ws) for ws in seg.tokenize(sentences)]
+    
+    try:
+        seg = get_segmenter()
+        # Fix: VnCoreNLP.word_segment() expects individual strings, not a list
+        # Process each sentence individually
+        segmented_results = []
+        for sentence in sentences:
+            if sentence is None or sentence.strip() == "":
+                segmented_results.append("")
+                continue
+            try:
+                # word_segment returns List[List[str]] for each sentence
+                segmented_words = seg.word_segment(sentence)[0]
+                segmented_results.append(" ".join(segmented_words))
+            except Exception as e:
+                print(f"Warning: Failed to segment sentence '{sentence[:50]}...': {e}")
+                segmented_results.append(sentence)  # Fallback to original
+        return segmented_results
+    except Exception as e:
+        print(f"Warning: Segmentation failed: {e}. Using original sentences.")
+        return sentences
 
 # ───────────── F-beta (token diff) ─────────────
 def extract_edit_positions(src_tokens, tgt_tokens):
@@ -128,8 +161,12 @@ def main():
     ds = ds.train_test_split(test_size=args.subset_ratio, seed=42)["test"]
     src_texts   = ds["incorrect_text"]
     gold_texts  = ds["correct_text"] if "correct_text" in ds.column_names else ds["target"]
-    src_texts   = maybe_segment(src_texts, seg_need)
-    gold_texts  = maybe_segment(gold_texts, seg_need)
+    
+    # Apply segmentation if needed
+    if seg_need:
+        print("Applying word segmentation...")
+        src_texts   = maybe_segment(src_texts, seg_need)
+        gold_texts  = maybe_segment(gold_texts, seg_need)
 
     # generation
     sys_texts = []
@@ -157,28 +194,63 @@ def main():
     # F0.5 (token diff)
     prec, rec, f05 = corpus_fbeta(src_texts, sys_texts, gold_texts, beta=0.5)
 
-    # sacreBLEU metrics
-    gleu = None
-    if GLEU_AVAILABLE:
-        gleu = GLEU().corpus_score(sys_texts, [gold_texts]).score
+    # sacreBLEU metrics with better error handling
+    gleu, chrf, bleu = None, None, None
+    
+    if not SACREBLEU_AVAILABLE:
+        print("ERROR: Cannot compute GLEU/BLEU/chrF++ - sacrebleu not available")
+        print("Install with: pip install sacrebleu")
+    else:
+        try:
+            # chrF++
+            chrf_metric = CHRF(word_order=2)
+            chrf = chrf_metric.corpus_score(sys_texts, [gold_texts]).score
+            
+            # BLEU (optional)
+            if args.calc_bleu:
+                bleu_metric = BLEU()
+                bleu = bleu_metric.corpus_score(sys_texts, [gold_texts]).score
+                
+        except Exception as e:
+            print(f"ERROR computing sacrebleu metrics: {e}")
+            print("This might be due to:")
+            print("1. Empty predictions/references")
+            print("2. Incompatible sacrebleu version")
+            print("3. Encoding issues")
 
-    chrf = CHRF(word_order=2).corpus_score(sys_texts, [gold_texts]).score
-    bleu = BLEU().corpus_score(sys_texts, [gold_texts]).score if args.calc_bleu else None
+    if GLEU_AVAILABLE:
+        try:
+            # GLEU using evaluate library
+            gleu_metric = evaluate.load("gleu")
+            # GLEU expects references as list of lists for each prediction
+            references_formatted = [[ref] for ref in gold_texts]
+            gleu_result = gleu_metric.compute(predictions=sys_texts, references=references_formatted)
+            gleu = gleu_result["gleu"] * 100  # Scale to 0-100 range like other metrics
+        except Exception as e:
+            print(f"ERROR computing GLEU metric: {e}")
+            print("This might be due to:")
+            print("1. Empty predictions/references")
+            print("2. Incompatible evaluate version")
+            print("3. Encoding issues")
+            gleu = None
 
     # log / print
     print(f"F0.5  : {f05*100:6.2f} (P={prec*100:.2f}, R={rec*100:.2f})")
     if gleu is not None:
         print(f"GLEU  : {gleu:6.2f}")
-    print(f"chrF++: {chrf:6.2f}")
+    if chrf is not None:
+        print(f"chrF++: {chrf:6.2f}")
     if bleu is not None:
         print(f"BLEU  : {bleu:6.2f}")
 
+    # Log to wandb with safe values
     wandb.log({
         "F0.5": f05, "Precision": prec, "Recall": rec,
         "GLEU": gleu/100.0 if gleu is not None else None,
-        "chrF++": chrf/100.0,
+        "chrF++": chrf/100.0 if chrf is not None else None,
         "BLEU": bleu/100.0 if bleu is not None else None
     })
+    
     # optional prediction table
     if args.log_predictions:
         table = wandb.Table(columns=["src", "pred", "gold"])

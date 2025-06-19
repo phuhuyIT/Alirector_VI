@@ -240,15 +240,26 @@ def main():
     
     # Load model with appropriate dtype
     model_dtype = torch.float16 if args.fp16 else torch.float32
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        args.model_path,
-        torch_dtype=model_dtype,
-        device_map="auto" if torch.cuda.is_available() else None,
-        low_cpu_mem_usage=True
-    )
+    
+    # Load model without device_map to avoid tensor parallel issues
+    try:
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            args.model_path,
+            torch_dtype=model_dtype,
+            low_cpu_mem_usage=True
+        )
+    except Exception as e:
+        logger.warning(f"Failed to load model with torch_dtype={model_dtype}, trying without dtype specification: {e}")
+        # Fallback: load without dtype specification
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            args.model_path,
+            low_cpu_mem_usage=True
+        )
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if not args.model_path.startswith("facebook/") and device == "cuda":
+    
+    # Move model to device explicitly
+    if device == "cuda":
         model.to(device)
     
     model.eval()
