@@ -165,6 +165,8 @@ def build_argparser():
     p.add_argument("--num_workers", type=int, default=4,
                    help="Number of workers for data loading")
     p.add_argument("--word_segment_save_dir", type=str, default="")
+    p.add_argument("--subset_ratio", type=float, default=1.0,
+                   help="Subset ratio for dataset")
     return p
 
 
@@ -233,6 +235,10 @@ def main():
     # Detect whether we need word segmentation
     auto_word = "word" in os.path.basename(args.model_path).lower()
     do_segment = args.word_segment or auto_word
+
+    # Validate subset_ratio parameter
+    if not (0.0 < args.subset_ratio <= 1.0):
+        raise ValueError(f"subset_ratio must be between 0.0 and 1.0, got {args.subset_ratio}")
 
     # Load model + tokenizer with optimizations
     logger.info("Loading tokenizer and model...")
