@@ -288,6 +288,16 @@ def main():
     else:
         dataset = load_dataset(args.dataset_name, split=args.split, streaming=False)
 
+    # Apply subset sampling if requested
+    if args.subset_ratio < 1.0:
+        original_size = len(dataset)
+        subset_size = int(original_size * args.subset_ratio)
+        logger.info(f"Sampling {subset_size} examples from {original_size} (ratio: {args.subset_ratio:.2f})")
+        
+        # Use shuffle with a fixed seed for reproducible results
+        dataset = dataset.shuffle(seed=42).select(range(subset_size))
+        logger.info(f"Dataset reduced from {original_size} to {len(dataset)} examples")
+
     # Optional segmentation
     if do_segment:
         logger.info("Applying word segmentation...")
