@@ -73,6 +73,8 @@ def build_argparser():
     p.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
     p.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
     p.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
+    # disable LoRA if desired
+    p.add_argument("--no_lora", action="store_true", help="Disable LoRA and fine-tune all model parameters")
     
     # training
     p.add_argument("--per_device_train_batch_size", type=int, default=4)
@@ -123,17 +125,18 @@ def main():
         device_map="auto"
     )
     
-    # Setup LoRA
-    lora_config = LoraConfig(
-        task_type=TaskType.SEQ_2_SEQ_LM,
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        target_modules=["q", "v", "k", "o", "wi_0", "wi_1", "wo"]  # ViT5 attention modules
-    )
-    
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
+    if not args.no_lora:
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_2_SEQ_LM,
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules=["q", "v", "k", "o", "wi_0", "wi_1", "wo"]
+        )
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+    else:
+        print("[INFO] LoRA disabled – training all model parameters.")
     
     # Check if we need word segmentation
     seg_needed = args.word_segment
@@ -227,7 +230,7 @@ def main():
         logging_steps=50,
         eval_steps=500,
         save_steps=1000,
-        eval_strategy="steps",
+        evaluation_strategy="steps",
         save_strategy="steps",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",

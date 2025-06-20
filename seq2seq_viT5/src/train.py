@@ -49,6 +49,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
     p.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
     p.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
+    # disable LoRA if desired
+    p.add_argument("--no_lora", action="store_true", help="Disable LoRA and fine-tune all model parameters")
     # wandb
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_vit5_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
@@ -232,17 +234,19 @@ def main():
         device_map="auto"
     )
     
-    # Setup LoRA
-    lora_config = LoraConfig(
-        task_type=TaskType.SEQ_2_SEQ_LM,
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        target_modules=["q", "v", "k", "o", "wi_0", "wi_1", "wo"]  # ViT5 attention modules
-    )
-    
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
+    # Optional LoRA (enabled by default)
+    if not args.no_lora:
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_2_SEQ_LM,
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules=["q", "v", "k", "o", "wi_0", "wi_1", "wo"]
+        )
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+    else:
+        print("[INFO] LoRA disabled – training all model parameters.")
     
     # Load dataset
     if os.path.isdir(args.dataset_name):
@@ -304,10 +308,8 @@ def main():
         bf16=True,  # Use bf16 as requested
         logging_dir=f"{args.output_dir}/logs",
         logging_steps=500,
-        eval_steps=500,
-        save_steps=1000,
-        eval_strategy="steps",
-        save_strategy="steps",
+        eval_strategy="epoch",
+        save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,

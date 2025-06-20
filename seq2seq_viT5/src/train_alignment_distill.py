@@ -104,6 +104,7 @@ def build_parser():
     p.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
     p.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha") 
     p.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
+    p.add_argument("--no_lora", action="store_true", help="Disable LoRA for student model")
     
     # distillation hyperparams
     p.add_argument("--alpha", type=float, default=0.5, help="Forward KLD weight")
@@ -273,20 +274,29 @@ def main():
         )
         student_model = PeftModel.from_pretrained(base_model, args.student_path)
     else:
-        # Add LoRA to pretrained model
-        student_model = AutoModelForSeq2SeqLM.from_pretrained(
-            args.student_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto"
-        )
-        lora_config = LoraConfig(
-            task_type=TaskType.SEQ_2_SEQ_LM,
-            r=args.lora_rank,
-            lora_alpha=args.lora_alpha,
-            lora_dropout=args.lora_dropout,
-            target_modules=["q", "v", "k", "o", "wi_0", "wi_1", "wo"]
-        )
-        student_model = get_peft_model(student_model, lora_config)
+        # Add LoRA if enabled, otherwise fine-tune full model
+        if not args.no_lora:
+            student_base = AutoModelForSeq2SeqLM.from_pretrained(
+                args.student_path,
+                torch_dtype=torch.bfloat16,
+                device_map="auto"
+            )
+            lora_config = LoraConfig(
+                task_type=TaskType.SEQ_2_SEQ_LM,
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                lora_dropout=args.lora_dropout,
+                target_modules=["q", "v", "k", "o", "wi_0", "wi_1", "wo"]
+            )
+            student_model = get_peft_model(student_base, lora_config)
+            student_model.print_trainable_parameters()
+        else:
+            student_model = AutoModelForSeq2SeqLM.from_pretrained(
+                args.student_path,
+                torch_dtype=torch.bfloat16,
+                device_map="auto"
+            )
+            print("[INFO] LoRA disabled for student – training full parameters.")
     
     # Load teacher models
     print(f"Loading forward teacher from {args.teacher_fwd_path}...")
@@ -418,7 +428,7 @@ def main():
         logging_steps=50,
         eval_steps=500,
         save_steps=1000,
-        eval_strategy="steps",
+        evaluation_strategy="steps",
         save_strategy="steps",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
