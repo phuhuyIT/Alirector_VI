@@ -199,11 +199,11 @@ class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
         # Total loss
         loss = loss_ce + self.rdrop_weight * loss_rdrop
         
-        # Log individual loss components
-        if self.rdrop_weight > 0.0 and model.training:
-            self.log({"train/loss_ce": loss_ce.item(), 
-                     "train/loss_rdrop": loss_rdrop.item(),
-                     "train/loss_total": loss.item()})
+        # # Log individual loss components
+        # if self.rdrop_weight > 0.0 and model.training:
+        #     self.log({"train/loss_ce": loss_ce.item(), 
+        #              "train/loss_rdrop": loss_rdrop.item(),
+        #              "train/loss_total": loss.item()})
         
         return (loss, outputs) if return_outputs else loss
 
@@ -303,7 +303,7 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         bf16=True,  # Use bf16 as requested
         logging_dir=f"{args.output_dir}/logs",
-        logging_steps=50,
+        logging_steps=500,
         eval_steps=500,
         save_steps=1000,
         eval_strategy="steps",
