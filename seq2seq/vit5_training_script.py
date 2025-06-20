@@ -114,7 +114,6 @@ def build_training_args(output_dir: str, args: argparse.Namespace, **extra):
         predict_with_generate=True,
         generation_max_length=args.max_target_len,
         generation_num_beams=args.beam_size,
-        decoder_start_token_id=0,
         **extra,
     )
     return hf_args
