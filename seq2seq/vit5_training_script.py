@@ -25,7 +25,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from datasets import load_from_disk, load_metric, DatasetDict
+from datasets import load_from_disk, DatasetDict
 from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
