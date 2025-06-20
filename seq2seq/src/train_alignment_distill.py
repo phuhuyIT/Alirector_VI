@@ -245,11 +245,11 @@ def main():
     ds = ds.map(build_src, batched=True, batch_size=1024)
 
     def encode(b):
-        stu = tok(b["src_student"], truncation=True, max_length=256)
-        fwd = tok(b["src_fwd"],     truncation=True, max_length=256)
-        rev = tok(b["src_rev"],     truncation=True, max_length=256)
+        stu = tok(b["src_student"], truncation=True, max_length=384)
+        fwd = tok(b["src_fwd"],     truncation=True, max_length=384)
+        rev = tok(b["src_rev"],     truncation=True, max_length=384)
         with tok.as_target_tokenizer():
-            lbl = tok(b["labels_text"], truncation=True, max_length=192)
+            lbl = tok(b["labels_text"], truncation=True, max_length=384)
         out = {
             # student
             "input_ids":        stu["input_ids"],
