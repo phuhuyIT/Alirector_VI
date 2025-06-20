@@ -10,6 +10,8 @@ Usage (Colab GPU):
 """
 
 import os, argparse, wandb
+import torch
+import torch.nn.functional as F
 from datasets import load_dataset, DatasetDict
 from transformers import (AutoTokenizer, AutoModelForSeq2SeqLM,
                           DataCollatorForSeq2Seq, Seq2SeqTrainer,
@@ -29,8 +31,8 @@ def build_argparser() -> argparse.ArgumentParser:
     # data & model
     p.add_argument("--dataset_name", type=str, default="bmd1905/vi-error-correction-v2")
     p.add_argument("--model_name_or_path", type=str, default="vinai/bartpho-syllable")
-    p.add_argument("--max_source_len", type=int, default=192)
-    p.add_argument("--max_target_len", type=int, default=192)
+    p.add_argument("--max_source_len", type=int, default=384)
+    p.add_argument("--max_target_len", type=int, default=384)
     p.add_argument("--output_dir", type=str, required=True)
     # train hyper-params
     p.add_argument("--per_device_train_batch_size", type=int, default=4)
@@ -49,6 +51,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--isbf16", type=bool, default=False,
                    help="Use bf16 instead of fp16")
     p.add_argument("--word_segment_save_dir", type=str, default="")
+    # Edit-weighted CE
+    p.add_argument("--edit_weight", type=float, default=1.0,
+                   help="Weight for edited tokens in CE loss (gamma). 1.0 = no weighting, >1.0 = focus on edits")
+    # R-Drop regularization
+    p.add_argument("--rdrop_weight", type=float, default=0.0,
+                   help="Weight for R-Drop regularization. 0.0 = disabled, 0.1-0.5 = typical values")
     return p
 
 # ------------- DEFINE helper ---------------------------------------------------
@@ -88,6 +96,85 @@ def segment_batch(texts, args):
         segmented_results.append("".join(segmented_words))
     
     return segmented_results
+
+
+class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
+    """Custom trainer that applies higher weights to edited tokens in CE loss and R-Drop regularization."""
+    
+    def __init__(self, edit_weight=1.0, rdrop_weight=0.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.edit_weight = edit_weight
+        self.rdrop_weight = rdrop_weight
+    
+    def compute_loss(self, model, inputs, return_outputs=False):
+        """Compute edit-weighted cross entropy loss with optional R-Drop regularization."""
+        labels = inputs.get("labels")
+        
+        if labels is None:
+            outputs = model(**inputs)
+            return outputs.loss if return_outputs else (outputs.loss, outputs)
+        
+        # First forward pass
+        outputs = model(**inputs)
+        logits = outputs.logits
+        
+        # Compute edit-weighted CE loss
+        if self.edit_weight == 1.0:
+            loss_ce = outputs.loss  # Standard CE loss
+        else:
+            # Compute edit-weighted CE loss
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            
+            # Create weight tensor: edit_weight for real tokens, 1.0 for padding
+            weights = torch.ones_like(shift_labels, dtype=torch.float)
+            mask = shift_labels != -100  # non-padding tokens
+            weights[mask] = self.edit_weight
+            
+            # Compute CE loss with weights
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+            losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), 
+                             shift_labels.view(-1))
+            losses = losses.view(shift_labels.shape)
+            
+            # Apply weights and mask
+            weighted_losses = losses * weights
+            loss_ce = weighted_losses[mask].mean()
+        
+        # R-Drop regularization
+        if self.rdrop_weight > 0.0 and model.training:
+            # Second forward pass with different dropout
+            outputs2 = model(**inputs)
+            logits2 = outputs2.logits
+            
+            # Compute KL divergence between two outputs
+            # Shift logits for autoregressive models
+            shift_logits1 = logits[..., :-1, :].contiguous()
+            shift_logits2 = logits2[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            
+            # Create mask for non-padding tokens
+            mask = shift_labels != -100
+            
+            # Compute log probabilities
+            log_p1 = F.log_softmax(shift_logits1, dim=-1)
+            log_p2 = F.log_softmax(shift_logits2, dim=-1)
+            p1 = F.softmax(shift_logits1, dim=-1)
+            p2 = F.softmax(shift_logits2, dim=-1)
+            
+            # Symmetric KL divergence
+            kl_loss1 = F.kl_div(log_p1, p2, reduction='none').sum(-1)  # [B, T]
+            kl_loss2 = F.kl_div(log_p2, p1, reduction='none').sum(-1)  # [B, T]
+            
+            # Apply mask and average
+            rdrop_loss = ((kl_loss1 + kl_loss2) * mask.float()).sum() / (2 * mask.sum())
+            
+            # Add R-Drop loss
+            loss = loss_ce + self.rdrop_weight * rdrop_loss
+        else:
+            loss = loss_ce
+        
+        return (loss, outputs) if return_outputs else loss
 
 
 def main():
@@ -179,13 +266,15 @@ def main():
     )
 
     # ---- Trainer ----------------------------------------------------------
-    trainer = Seq2SeqTrainer(
+    trainer = EditWeightedCrossEntropyTrainer(
         model=model,
         args=training_args,
         train_dataset=tokenised["train"],
         eval_dataset=tokenised["validation"],
         tokenizer=tok,
-        data_collator=collator
+        data_collator=collator,
+        edit_weight=args.edit_weight,
+        rdrop_weight=args.rdrop_weight
     )
 
     trainer.train()

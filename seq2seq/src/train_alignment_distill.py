@@ -100,6 +100,9 @@ def build_parser():
                    help="weight for reverse-KL")
     p.add_argument("--tau", type=float, default=1.0,
                    help="temperature for KD")
+    # Edit-weighted CE
+    p.add_argument("--edit_weight", type=float, default=1.0,
+                   help="Weight for edited tokens in CE loss (gamma). 1.0 = no weighting, >1.0 = focus on edits")
     # training
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--epochs", type=int, default=3)
@@ -118,7 +121,7 @@ def build_parser():
 # ────────────────────────────  Trainer  ──────────────────────────────────
 class DistilTrainer(Seq2SeqTrainer):
     def __init__(self, *args, teacher_fwd=None, teacher_rev=None,
-                 alpha=1.0, beta=0.5, tau=1.0, **kwargs):
+                 alpha=1.0, beta=0.5, tau=1.0, edit_weight=1.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.teacher_fwd = teacher_fwd.eval()
         self.teacher_rev = teacher_rev.eval()
@@ -126,7 +129,7 @@ class DistilTrainer(Seq2SeqTrainer):
             p.requires_grad_(False)
         for p in self.teacher_rev.parameters():
             p.requires_grad_(False)
-        self.alpha, self.beta, self.tau = alpha, beta, tau
+        self.alpha, self.beta, self.tau, self.edit_weight = alpha, beta, tau, edit_weight
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs["labels"]
@@ -136,7 +139,29 @@ class DistilTrainer(Seq2SeqTrainer):
             if k in inputs
         }
         outputs_s = model(**student_args)      
-        loss_ce = outputs_s.loss                                     # NLL
+        
+        # ----- Edit-weighted CE loss computation -------------------------
+        if self.edit_weight == 1.0:
+            loss_ce = outputs_s.loss  # Standard CE loss
+        else:
+            # Compute edit-weighted CE loss
+            logits = outputs_s.logits
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            
+            # Create weight tensor
+            weights = torch.ones_like(shift_labels, dtype=torch.float)
+            mask = shift_labels != -100
+            weights[mask] = self.edit_weight
+            
+            # Compute weighted CE loss
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+            losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
+                             shift_labels.view(-1))
+            losses = losses.view(shift_labels.shape)
+            weighted_losses = losses * weights
+            loss_ce = weighted_losses[mask].mean()
+
         # ----- teacher logits (no grad) -----------------------------
         with torch.no_grad():
             tf_logits = self.teacher_fwd(
@@ -165,6 +190,9 @@ class DistilTrainer(Seq2SeqTrainer):
         denom = mask_token.sum()                 # number of real tokens
         kld_fwd = (kl_fwd_tok * mask_token).sum() / denom
         kld_rev = (kl_rev_tok * mask_token).sum() / denom
+
+        kld_fwd *= self.tau ** 2    # restore gradient scale
+        kld_rev *= self.tau ** 2
 
         loss = loss_ce + self.alpha * kld_fwd + self.beta * kld_rev
 
@@ -271,7 +299,7 @@ def main():
         data_collator=collator,
         teacher_fwd=teacher_fwd,
         teacher_rev=teacher_rev,
-        alpha=args.alpha, beta=args.beta, tau=args.tau
+        alpha=args.alpha, beta=args.beta, tau=args.tau, edit_weight=args.edit_weight
     )
 
     trainer.train()
