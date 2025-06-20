@@ -95,7 +95,7 @@ def build_training_args(output_dir: str, args: argparse.Namespace, **extra):
         warmup_steps=args.warmup_steps,
         fp16=not args.bf16,
         bf16=args.bf16,
-        logging_steps=50,
+        logging_steps=100,
         gradient_accumulation_steps=args.grad_acc,
         label_smoothing_factor=args.label_smoothing,
         predict_with_generate=True,
