@@ -97,7 +97,7 @@ def build_training_args(output_dir: str, args: argparse.Namespace, **extra):
     hf_args = Seq2SeqTrainingArguments(
         output_dir=str(output_dir),
         overwrite_output_dir=True,
-        evaluation_strategy="steps" if args.eval_steps else "no",
+        eval_strategy="steps" if args.eval_steps else "no",
         save_strategy="steps",
         save_steps=args.save_steps,
         eval_steps=args.eval_steps,
