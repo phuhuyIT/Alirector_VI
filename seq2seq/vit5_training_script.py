@@ -60,7 +60,7 @@ class EditWeightedLossTrainer(Seq2SeqTrainer):
         super().__init__(*args, **kwargs)
         self.gamma_edit = gamma_edit
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs.pop("labels")
         outputs = model(**inputs, labels=labels)
         logits = outputs.logits  # (B, L, V)
