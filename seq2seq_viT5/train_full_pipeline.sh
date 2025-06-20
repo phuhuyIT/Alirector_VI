@@ -11,7 +11,7 @@ echo "Starting Vietnamese GEC Training Pipeline with ViT5..."
 DATASET_NAME="bmd1905/vi-error-correction-v2"
 MODEL_NAME="VietAI/vit5-base"
 WANDB_PROJECT="vietgec_vit5"
-WANDB_ENTITY="your-wandb-entity"
+WANDB_ENTITY="phuhuy02003-university-of-transport-and-communications"
 
 # Directories
 BASE_DIR="runs"

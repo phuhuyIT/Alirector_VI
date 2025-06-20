@@ -35,6 +35,9 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--max_source_len", type=int, default=384)
     p.add_argument("--max_target_len", type=int, default=384)
     p.add_argument("--output_dir", type=str, required=True)
+    # dataset column names
+    p.add_argument("--source_column", type=str, default="incorrect_text", help="Column name for source/incorrect sentences")
+    p.add_argument("--target_column", type=str, default="correct_text", help="Column name for target/correct sentences")
     # train hyper-params
     p.add_argument("--per_device_train_batch_size", type=int, default=4)
     p.add_argument("--per_device_eval_batch_size", type=int, default=4)
@@ -252,7 +255,9 @@ def main():
         sources = []
         targets = []
         
-        for src, tgt in zip(batch['input'], batch['target']):
+        source_batch = batch[args.source_column]
+        target_batch = batch[args.target_column]
+        for src, tgt in zip(source_batch, target_batch):
             # Add "gec: " prefix to source as instruction
             source = f"gec: {src}"
             
