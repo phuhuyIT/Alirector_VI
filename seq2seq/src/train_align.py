@@ -73,8 +73,8 @@ def build_argparser():
     p.add_argument("--learning_rate", type=float, default=3e-5)
     p.add_argument("--num_train_epochs", type=int, default=4)
     p.add_argument("--gradient_accumulation_steps", type=int, default=4)
-    p.add_argument("--max_source_len", type=int, default=256)
-    p.add_argument("--max_target_len", type=int, default=192)
+    p.add_argument("--max_source_len", type=int, default=384)
+    p.add_argument("--max_target_len", type=int, default=384)
     # misc
     p.add_argument("--beam_size", type=int, default=5)
     p.add_argument("--fp16", action="store_true")

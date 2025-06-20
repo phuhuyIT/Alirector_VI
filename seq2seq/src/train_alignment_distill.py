@@ -94,11 +94,11 @@ def build_parser():
     p.add_argument("--teacher_fwd_path", required=True)
     p.add_argument("--teacher_rev_path", required=True)
     p.add_argument("--output_dir", required=True)
-    p.add_argument("--alpha", type=float, default=0.9,
+    p.add_argument("--alpha", type=float, default=0.5,
                    help="weight for forward-KL")      # :contentReference[oaicite:2]{index=2}
     p.add_argument("--beta", type=float, default=0.5,
                    help="weight for reverse-KL")
-    p.add_argument("--tau", type=float, default=1.0,
+    p.add_argument("--tau", type=float, default=2.0,
                    help="temperature for KD")
     # Edit-weighted CE
     p.add_argument("--edit_weight", type=float, default=1.0,

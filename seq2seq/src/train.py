@@ -106,7 +106,7 @@ class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
         self.edit_weight = edit_weight
         self.rdrop_weight = rdrop_weight
     
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Compute edit-weighted cross entropy loss with optional R-Drop regularization."""
         labels = inputs.get("labels")
         
