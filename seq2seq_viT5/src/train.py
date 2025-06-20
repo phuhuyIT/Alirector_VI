@@ -51,6 +51,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
     # disable LoRA if desired
     p.add_argument("--no_lora", action="store_true", help="Disable LoRA and fine-tune all model parameters")
+    # enable FlashAttention 2
+    p.add_argument("--flash_attn", action="store_true", help="Enable FlashAttention 2 for faster training (requires flash-attn and transformers>=4.35)")
     # wandb
     p.add_argument("--wandb_project", type=str, default="Vi_Alirector_vit5_base")
     p.add_argument("--wandb_entity", type=str, default="phuhuy02003-university-of-transport-and-communications")
@@ -228,11 +230,27 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        args.model_name_or_path,
-        torch_dtype=torch.bfloat16,  # Use bf16 as requested
-        device_map="auto"
-    )
+    # Model kwargs
+    model_kwargs = dict(torch_dtype=torch.bfloat16, device_map="auto")
+    if args.flash_attn:
+        # Newer transformers (>=4.35) support built-in FlashAttention 2 via this arg
+        model_kwargs["attn_implementation"] = "flash_attention_2"
+        print("[INFO] FlashAttention 2 enabled.")
+    try:
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            args.model_name_or_path,
+            **model_kwargs
+        )
+    except TypeError as e:
+        if args.flash_attn and "attn_implementation" in model_kwargs:
+            print("[WARNING] FlashAttention 2 not supported in this transformers version – falling back to default attention. Error:", e)
+            model_kwargs.pop("attn_implementation", None)
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                args.model_name_or_path,
+                **model_kwargs
+            )
+        else:
+            raise
     
     # Optional LoRA (enabled by default)
     if not args.no_lora:
