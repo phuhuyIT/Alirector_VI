@@ -313,7 +313,7 @@ def stage3_distill(args: argparse.Namespace):
     training_args = build_training_args("stage3_student", args)
 
     class DistilTrainer(EditWeightedLossTrainer):
-        def compute_loss(self, model, inputs, return_outputs=False):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
             labels = inputs.pop("labels")
             # Student forward
             outputs = model(**inputs, labels=labels)
