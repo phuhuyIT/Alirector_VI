@@ -35,7 +35,20 @@ from transformers import (
     set_seed,
     Adafactor,
 )
-
+def smart_load_dataset(path: str) -> DatasetDict:
+    """Load local Arrow folder or pull from HF hub automatically."""
+    p = Path(path)
+    if p.exists():
+        return load_from_disk(str(p))
+    # else treat as hub repo id
+    print(f"[INFO] Loading remote dataset '{path}' from HuggingFace hub …")
+    ds = load_dataset(path)
+    # cache locally for later stages
+    cache_dir = Path(f"hf_cache_{path.replace('/', '_')}")
+    cache_dir.mkdir(exist_ok=True)
+    ds.save_to_disk(cache_dir)
+    print(f"[INFO] Saved HF dataset to {cache_dir} for reuse.")
+    return ds
 
 # -----------------------------
 # Helper: edit‑weighted loss
@@ -115,7 +128,8 @@ def stage1_train(args: argparse.Namespace):
     tok = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path)
 
-    ds = load_from_disk(args.dataset_dir)
+    ds = smart_load_dataset(args.dataset_dir)
+
     # Assume columns: incorrect_text, correct_text
     def preprocess(batch):
         src = [args.prefix + x for x in batch["incorrect_text"]]
@@ -171,7 +185,7 @@ def stage2_predict(args: argparse.Namespace):
     model = AutoModelForSeq2SeqLM.from_pretrained(args.stage1_path).to(args.device)
     model.eval()
 
-    ds = load_from_disk(args.dataset_dir)
+    ds = smart_load_dataset(args.dataset_dir)
 
     def generate(batch):
         src = [args.prefix + x for x in batch["incorrect_text"]]
@@ -207,7 +221,7 @@ def stage2_train_align(args: argparse.Namespace):
     tok = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
     sep_tok = "<extra_id_0>"
 
-    ds = load_from_disk(args.pred_dir)
+    ds = smart_load_dataset(args.pred_dir)
 
     # keep only rows where pred != correct
     ds = ds.filter(lambda ex: ex["pred"].strip() != ex["correct_text"].strip(), num_proc=4)
@@ -276,7 +290,7 @@ def stage3_distill(args: argparse.Namespace):
     sep_tok = "<extra_id_0>"
 
     # Load datasets with pred column again
-    ds = load_from_disk(args.pred_dir)
+    ds = smart_load_dataset(args.pred_dir)
     ds = ds.filter(lambda ex: ex["pred"].strip() != ex["correct_text"].strip(), num_proc=4)
 
     teacher_a = AutoModelForSeq2SeqLM.from_pretrained(args.teacher_A_path).eval().to(args.device)
@@ -360,7 +374,7 @@ def main():
     parser.add_argument("--save_steps", type=int, default=500)
     parser.add_argument("--warmup_steps", type=int, default=200)
     parser.add_argument("--grad_acc", type=int, default=1)
-    parser.add_argument("--label_smoothing", type=float, default=0.0)
+    parser.add_argument("--label_smoothing", type=float, default=0.1)
     parser.add_argument("--beam_size", type=int, default=5)
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--use_edit_weight", action="store_true")
