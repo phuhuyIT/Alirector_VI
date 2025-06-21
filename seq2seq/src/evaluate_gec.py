@@ -117,7 +117,7 @@ def get_args():
     p.add_argument("--split", default="validation")
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--beam", type=int, default=5)
-    p.add_argument("--max_len", type=int, default=192)
+    p.add_argument("--max_len", type=int, default=384)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--calc_bleu", action="store_true",
                    help="Also compute BLEU (slower)")
