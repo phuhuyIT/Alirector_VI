@@ -76,18 +76,11 @@ class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
         label_smoother: Optional["LabelSmoother"] = None,
         **kwargs,
     ) -> None:
-        # --------------------------------------------------------------
-        # 1. grab and strip out the arg(s) we don’t want to forward
-        # --------------------------------------------------------------
         if "label_smoother" in kwargs:
-            # Allow the caller to pass it as a kwarg, but pop it so the
-            # base class doesn’t complain on older HF versions.
             label_smoother = kwargs.pop("label_smoother")
 
-        # 2. Init base trainer *without* the incompatible kwarg
         super().__init__(*args, **kwargs)
 
-        # 3. our extras
         if edit_weight <= 0:
             raise ValueError("edit_weight must be > 0")
         self.edit_weight = float(edit_weight)
@@ -101,30 +94,37 @@ class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
         model,
         inputs: Dict[str, torch.Tensor],
         return_outputs: bool = False,
+        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[Tuple[Any, ...]]]:
         """Override HF Trainer’s loss to insert edit‑weights."""
 
-        labels = inputs["labels"]  # retain a copy (bs, tgt_len)
-
-        # Forward pass.  HF will internally shift the decoder inputs when
-        # we provide `labels`, so we simply let the model handle that.
+        labels = inputs["labels"]  # (bs, tgt_len)
         outputs = model(**inputs)
         logits = outputs.logits  # (bs, tgt_len, vocab)
 
-        # -------- Align target / source tokens -------------------------
+        #  Align target / source tokens ---------------------------------
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = labels[:, 1:].contiguous()
-        shift_src    = inputs["input_ids"][:, 1:].contiguous()
-        vocab_size   = shift_logits.size(-1)
+        shift_src = inputs["input_ids"][:, 1:].contiguous()
 
-        #  Mask for non‑padding and edited tokens -----------------------
-        non_pad    = shift_labels.ne(-100)
-        edit_mask  = shift_labels.ne(shift_src) & non_pad
+        vocab_size = shift_logits.size(-1)
+        non_pad = shift_labels.ne(-100)
+
+        # --- build edit‑mask with safe length matching -----------------
+        bs, tgt_len = shift_labels.shape
+        src_len = shift_src.size(1)
+        min_len = min(tgt_len, src_len)
+
+        edit_mask = torch.zeros_like(shift_labels, dtype=torch.bool)
+        # Compare only in the overlapping region
+        edit_region = shift_labels[:, :min_len].ne(shift_src[:, :min_len])
+        edit_mask[:, :min_len] = edit_region
+        edit_mask &= non_pad  # ignore pads
 
         #  Per‑token weights -------------------------------------------
         weights = torch.ones_like(shift_labels, dtype=shift_logits.dtype)
         if self.edit_weight != 1.0:
-            weights[edit_mask] = self.edit_weight
+            weights = torch.where(edit_mask, torch.full_like(weights, self.edit_weight), weights)
 
         #  Raw CE loss --------------------------------------------------
         loss_fct = nn.CrossEntropyLoss(reduction="none", ignore_index=-100)
@@ -133,9 +133,8 @@ class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
 
         loss = (loss_flat * weights)[non_pad].mean()
 
-        #  Optional label smoothing 
+        #  Optional label smoothing ------------------------------------
         if self.label_smoother is not None and self.label_smoother.smoothing > 0:
-            # The HF label smoother expects original (un‑shifted) tensors.
             smooth_loss = self.label_smoother(outputs, labels)
             loss = loss + smooth_loss
 
