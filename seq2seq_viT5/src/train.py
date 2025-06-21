@@ -70,63 +70,73 @@ def segment_batch(texts: List[str], args):
 # ---------------------------------------------------------------------------
 class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
     def __init__(
-            self,
-            *args,
-            edit_weight: float = 1.0,
-            label_smoother: Optional[LabelSmoother] = None,
-            **kwargs,
-        ) -> None:
-            super().__init__(*args, label_smoother=label_smoother, **kwargs)
-            self.edit_weight = float(edit_weight)
-            if self.edit_weight <= 0:
-                raise ValueError("edit_weight must be positive.")
+        self,
+        *args,
+        edit_weight: float = 1.0,
+        label_smoother: Optional["LabelSmoother"] = None,
+        **kwargs,
+    ) -> None:
+        # --------------------------------------------------------------
+        # 1. grab and strip out the arg(s) we don’t want to forward
+        # --------------------------------------------------------------
+        if "label_smoother" in kwargs:
+            # Allow the caller to pass it as a kwarg, but pop it so the
+            # base class doesn’t complain on older HF versions.
+            label_smoother = kwargs.pop("label_smoother")
 
-    # ---------------------------------------------------------------------
-    # Core logic -----------------------------------------------------------
-    # ---------------------------------------------------------------------
+        # 2. Init base trainer *without* the incompatible kwarg
+        super().__init__(*args, **kwargs)
+
+        # 3. our extras
+        if edit_weight <= 0:
+            raise ValueError("edit_weight must be > 0")
+        self.edit_weight = float(edit_weight)
+        self.label_smoother = label_smoother
+
+    # ------------------------------------------------------------------
+    #  Loss computation -------------------------------------------------
+    # ------------------------------------------------------------------
     def compute_loss(
         self,
         model,
         inputs: Dict[str, torch.Tensor],
         return_outputs: bool = False,
     ) -> Tuple[torch.Tensor, Optional[Tuple[Any, ...]]]:
-        """Override HF Trainer's loss computation to insert per‑token weights."""
+        """Override HF Trainer’s loss to insert edit‑weights."""
 
-        labels = inputs.pop("labels")  # (bs, tgt_len)
-        # Forward pass -----------------------------------------------------
-        outputs = model(**inputs, labels=labels)
+        labels = inputs["labels"]  # retain a copy (bs, tgt_len)
+
+        # Forward pass.  HF will internally shift the decoder inputs when
+        # we provide `labels`, so we simply let the model handle that.
+        outputs = model(**inputs)
         logits = outputs.logits  # (bs, tgt_len, vocab)
 
-        # Shift so that tokens <t> predict t+1 --------------------------------
+        # -------- Align target / source tokens -------------------------
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = labels[:, 1:].contiguous()
-        shift_src    = inputs["input_ids"][:, 1:].contiguous()  # align with tgt
+        shift_src    = inputs["input_ids"][:, 1:].contiguous()
         vocab_size   = shift_logits.size(-1)
 
-        # ------------------------------------------------------------------
-        #  Edit mask: tokens that are different *and* not padding (-100)
-        # ------------------------------------------------------------------
-        non_pad     = shift_labels != -100
-        edit_mask   = (shift_labels != shift_src) & non_pad
+        #  Mask for non‑padding and edited tokens -----------------------
+        non_pad    = shift_labels.ne(-100)
+        edit_mask  = shift_labels.ne(shift_src) & non_pad
 
-        # Per‑token weights -------------------------------------------------
+        #  Per‑token weights -------------------------------------------
         weights = torch.ones_like(shift_labels, dtype=shift_logits.dtype)
         if self.edit_weight != 1.0:
             weights[edit_mask] = self.edit_weight
 
-        # Cross‑entropy over vocabulary ------------------------------------
+        #  Raw CE loss --------------------------------------------------
         loss_fct = nn.CrossEntropyLoss(reduction="none", ignore_index=-100)
-        loss_flat = loss_fct(
-            shift_logits.view(-1, vocab_size),
-            shift_labels.view(-1),
-        ).view_as(shift_labels)
+        loss_flat = loss_fct(shift_logits.view(-1, vocab_size),
+                             shift_labels.view(-1)).view_as(shift_labels)
 
-        # Apply weights, ignore padding ------------------------------------
         loss = (loss_flat * weights)[non_pad].mean()
 
-        # Optional label‑smoothing after weighting -------------------------
+        #  Optional label smoothing 
         if self.label_smoother is not None and self.label_smoother.smoothing > 0:
-            smooth_loss = self.label_smoother(outputs, shift_labels)
+            # The HF label smoother expects original (un‑shifted) tensors.
+            smooth_loss = self.label_smoother(outputs, labels)
             loss = loss + smooth_loss
 
         return (loss, outputs) if return_outputs else loss
