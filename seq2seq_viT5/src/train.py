@@ -69,54 +69,65 @@ def segment_batch(texts: List[str], args):
 # Custom Trainer – edit-weighted CE + optional R-Drop
 # ---------------------------------------------------------------------------
 class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
-    def __init__(self, edit_weight=1.0, rdrop_weight=0.0, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.edit_weight = edit_weight
-        self.rdrop_weight = rdrop_weight
+    def __init__(
+            self,
+            *args,
+            edit_weight: float = 1.0,
+            label_smoother: Optional[LabelSmoother] = None,
+            **kwargs,
+        ) -> None:
+            super().__init__(*args, label_smoother=label_smoother, **kwargs)
+            self.edit_weight = float(edit_weight)
+            if self.edit_weight <= 0:
+                raise ValueError("edit_weight must be positive.")
 
-    def compute_loss(self, model, inputs, return_outputs=False):  # noqa: D401
-        labels = inputs.get("labels")
-        # First forward pass --------------------------------------------------
-        outputs = model(**inputs)
-        logits = outputs.logits
+    # ---------------------------------------------------------------------
+    # Core logic -----------------------------------------------------------
+    # ---------------------------------------------------------------------
+    def compute_loss(
+        self,
+        model,
+        inputs: Dict[str, torch.Tensor],
+        return_outputs: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[Tuple[Any, ...]]]:
+        """Override HF Trainer's loss computation to insert per‑token weights."""
 
-        # (1) Edit-weighted CE ----------------------------------------------
-        if self.edit_weight == 1.0 or labels is None:
-            loss_ce = outputs.loss
-        else:
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            weights = torch.ones_like(shift_labels, dtype=torch.float)
-            mask = shift_labels != -100
-            weights[mask] = self.edit_weight
-            loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-            losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
-                               shift_labels.view(-1))
-            losses = losses.view_as(shift_labels)
-            weighted = (losses * weights)[mask]
-            loss_ce = weighted.mean() if weighted.numel() else outputs.loss
+        labels = inputs.pop("labels")  # (bs, tgt_len)
+        # Forward pass -----------------------------------------------------
+        outputs = model(**inputs, labels=labels)
+        logits = outputs.logits  # (bs, tgt_len, vocab)
 
-        # (2) R-Drop ---------------------------------------------------------
-        if self.rdrop_weight > 0 and model.training:
-            outputs2 = model(**inputs)
-            logits2 = outputs2.logits
+        # Shift so that tokens <t> predict t+1 --------------------------------
+        shift_logits = logits[:, :-1, :].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+        shift_src    = inputs["input_ids"][:, 1:].contiguous()  # align with tgt
+        vocab_size   = shift_logits.size(-1)
 
-            s1 = logits[..., :-1, :].contiguous()
-            s2 = logits2[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+        # ------------------------------------------------------------------
+        #  Edit mask: tokens that are different *and* not padding (-100)
+        # ------------------------------------------------------------------
+        non_pad     = shift_labels != -100
+        edit_mask   = (shift_labels != shift_src) & non_pad
 
-            log_p1 = F.log_softmax(s1, dim=-1)
-            log_p2 = F.log_softmax(s2, dim=-1)
-            p1 = F.softmax(s1, dim=-1)
-            p2 = F.softmax(s2, dim=-1)
+        # Per‑token weights -------------------------------------------------
+        weights = torch.ones_like(shift_labels, dtype=shift_logits.dtype)
+        if self.edit_weight != 1.0:
+            weights[edit_mask] = self.edit_weight
 
-            kl_1 = F.kl_div(log_p1, p2, reduction="none").sum(-1)
-            kl_2 = F.kl_div(log_p2, p1, reduction="none").sum(-1)
-            mask = shift_labels != -100
-            rdrop = ((kl_1 + kl_2) * mask.float()).sum() / (2 * mask.sum())
-            loss = loss_ce + self.rdrop_weight * rdrop
-        else:
-            loss = loss_ce
+        # Cross‑entropy over vocabulary ------------------------------------
+        loss_fct = nn.CrossEntropyLoss(reduction="none", ignore_index=-100)
+        loss_flat = loss_fct(
+            shift_logits.view(-1, vocab_size),
+            shift_labels.view(-1),
+        ).view_as(shift_labels)
+
+        # Apply weights, ignore padding ------------------------------------
+        loss = (loss_flat * weights)[non_pad].mean()
+
+        # Optional label‑smoothing after weighting -------------------------
+        if self.label_smoother is not None and self.label_smoother.smoothing > 0:
+            smooth_loss = self.label_smoother(outputs, shift_labels)
+            loss = loss + smooth_loss
 
         return (loss, outputs) if return_outputs else loss
 
@@ -240,7 +251,7 @@ def main():
         fp16=not args.isbf16,
         bf16=args.isbf16,
         report_to=["wandb"] if args.wandb_project else [],
-        logging_steps=20,
+        logging_steps=100,
         dataloader_num_workers=2,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
@@ -254,8 +265,7 @@ def main():
         eval_dataset=tokenised["validation"],
         tokenizer=tok,
         data_collator=collator,
-        edit_weight=args.edit_weight,
-        rdrop_weight=args.rdrop_weight,
+        edit_weight=args.edit_weight
     )
 
     trainer.train()
