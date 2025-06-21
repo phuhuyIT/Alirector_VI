@@ -21,7 +21,7 @@ python -m src.train \
 import os, argparse, wandb
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple, List
-
+from transformers.trainer_pt_utils import LabelSmoother
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset, DatasetDict
