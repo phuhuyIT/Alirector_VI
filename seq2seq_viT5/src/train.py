@@ -20,7 +20,7 @@ python -m src.train \
 
 import os, argparse, wandb
 from functools import lru_cache
-from typing import List
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -162,8 +162,6 @@ def build_parser():
     # regularisation -------------------------------------------------------
     p.add_argument("--edit_weight", type=float, default=1.0,
                    help="Gamma for edit-weighted CE loss")
-    p.add_argument("--rdrop_weight", type=float, default=0.0,
-                   help="Weight for R-Drop regularisation term")
     # WandB ---------------------------------------------------------------
     p.add_argument("--wandb_project", type=str, default="vietgec")
     p.add_argument("--wandb_entity", type=str, default=None)
