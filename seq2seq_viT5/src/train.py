@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional, Tuple, List
 from transformers.trainer_pt_utils import LabelSmoother
 import torch
 import torch.nn.functional as F
+from torch import nn
 from datasets import load_dataset, DatasetDict
 from transformers import (
     AutoConfig,
