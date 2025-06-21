@@ -139,7 +139,7 @@ class EditWeightedCrossEntropyTrainer(Seq2SeqTrainer):
             
             # Apply weights and mask
             weighted_losses = losses * weights
-            loss_ce = weighted_losses[mask].mean()
+            # Normalize by total weight to keep gradient scale stable\n            loss_ce = weighted_losses[mask].sum() / weights[mask].sum()
         
         # R-Drop regularization
         if self.rdrop_weight > 0.0 and model.training:
@@ -261,6 +261,7 @@ def main():
         report_to=["wandb"],
         logging_steps=20,
         dataloader_num_workers=2,
+        group_by_length=True,
         load_best_model_at_end=True,
         metric_for_best_model="loss"
     )

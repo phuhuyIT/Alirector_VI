@@ -160,7 +160,8 @@ class DistilTrainer(Seq2SeqTrainer):
                              shift_labels.view(-1))
             losses = losses.view(shift_labels.shape)
             weighted_losses = losses * weights
-            loss_ce = weighted_losses[mask].mean()
+            # Normalize by total weight to keep gradient scale stable
+            loss_ce = weighted_losses[mask].sum() / weights[mask].sum()
 
         # ----- teacher logits (no grad) -----------------------------
         with torch.no_grad():
@@ -287,6 +288,7 @@ def main():
         predict_with_generate=True,
         generation_num_beams=5,
         save_total_limit=3,
+        group_by_length=True,
         logging_steps=20
     )
 
